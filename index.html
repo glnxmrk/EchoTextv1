@@ -32,6 +32,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
     <style>
+      /* All previous styles remain the same */
       /* Simple animation for modal */
       @keyframes fade-in-down {
         0% {
@@ -609,6 +610,20 @@
           getMiscueDataByStudent,
           deleteMiscueAnalysis
         };
+      };
+
+      // NEW: Custom hook for progress report settings
+      const useProgressReportSettings = () => {
+        const [settings, setSettings] = useLocalStorage('echoText-progressReportSettings', {
+          totalWeeks: 8,
+          reportPeriod: 'weeks' // 'weeks' or 'days'
+        });
+        
+        const updateSettings = (newSettings) => {
+          setSettings(prev => ({ ...prev, ...newSettings }));
+        };
+        
+        return [settings, updateSettings];
       };
 
       // Enhanced useSpeechSynthesis hook with better voice selection
@@ -1347,6 +1362,102 @@
                   className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-blue-600"
                 >
                   Save
+                </button>
+              </div>
+            </div>
+          </Modal>
+        );
+      };
+
+      // NEW: Progress Report Settings Modal Component
+      const ProgressReportSettingsModal = ({ isOpen, onClose, settings, updateSettings }) => {
+        const [tempSettings, setTempSettings] = useState(settings);
+        
+        useEffect(() => {
+          setTempSettings(settings);
+        }, [settings, isOpen]);
+        
+        const handleSave = () => {
+          updateSettings(tempSettings);
+          onClose();
+        };
+        
+        const handlePeriodChange = (period) => {
+          setTempSettings(prev => ({
+            ...prev,
+            reportPeriod: period
+          }));
+        };
+        
+        return (
+          <Modal isOpen={isOpen} onClose={onClose} title="Progress Report Settings">
+            <div className="space-y-4">
+              <div className="bg-blue-50 p-4 rounded-md border border-blue-200">
+                <p className="text-sm text-blue-700">
+                  Configure how many weeks or days of data should be included in the progress reports.
+                </p>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Report Period Type</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="reportPeriod"
+                      value="weeks"
+                      checked={tempSettings.reportPeriod === 'weeks'}
+                      onChange={() => handlePeriodChange('weeks')}
+                      className="form-radio h-4 w-4 text-primary"
+                    />
+                    <span className="ml-2">Weeks</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="reportPeriod"
+                      value="days"
+                      checked={tempSettings.reportPeriod === 'days'}
+                      onChange={() => handlePeriodChange('days')}
+                      className="form-radio h-4 w-4 text-primary"
+                    />
+                    <span className="ml-2">Days</span>
+                  </label>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Total {tempSettings.reportPeriod === 'weeks' ? 'Weeks' : 'Days'} for Report
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={tempSettings.reportPeriod === 'weeks' ? '52' : '365'}
+                  value={tempSettings.totalWeeks}
+                  onChange={(e) => setTempSettings(prev => ({
+                    ...prev,
+                    totalWeeks: parseInt(e.target.value) || 1
+                  }))}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Set the total number of {tempSettings.reportPeriod === 'weeks' ? 'weeks' : 'days'} to include in progress reports.
+                </p>
+              </div>
+              
+              <div className="flex justify-end gap-2 pt-4">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-blue-600"
+                >
+                  Save Settings
                 </button>
               </div>
             </div>
@@ -4719,10 +4830,12 @@
         );
       };
 
-      // UPDATED: Results component with Miscue Analysis Report
+      // UPDATED: Results component with Progress Report Settings and Miscue Analysis Report
       const Results = ({ students, assessments, teacherName }) => {
         const [selectedStudentId, setSelectedStudentId] = useState('');
         const [activeTab, setActiveTab] = useState('progress'); // 'progress' or 'miscue'
+        const [settings, updateSettings] = useProgressReportSettings();
+        const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
         const getPhilIriLevel = (wordRecognition, comprehension) => {
             if (wordRecognition === undefined || comprehension === undefined) {
@@ -4742,19 +4855,33 @@
             if (!student) return null;
             
             const studentAssessments = assessments[studentId] || [];
-            const week1 = studentAssessments.find(a => a.week === 1);
-            const week4 = studentAssessments.find(a => a.week === 4);
-            const week8 = studentAssessments.find(a => a.week === 8);
+            const totalPeriods = settings.totalWeeks;
+            
+            // Get data for all periods based on settings
+            const periodData = Array.from({ length: totalPeriods }, (_, i) => {
+              const period = i + 1;
+              return studentAssessments.find(a => a.week === period);
+            });
+            
+            // Get first and last assessment for progress calculation
+            const firstAssessment = studentAssessments.find(a => a.week === 1);
+            const lastAssessment = studentAssessments.find(a => a.week === totalPeriods) || 
+                                 studentAssessments[studentAssessments.length - 1];
 
             const createRowData = (key, name, unit = '%') => {
-                const val1 = week1?.[key];
-                const val8 = week8?.[key];
-                const progress = (typeof val1 === 'number' && typeof val8 === 'number') ? `${val8 - val1}${unit}` : '-';
+                const val1 = firstAssessment?.[key];
+                const valLast = lastAssessment?.[key];
+                const progress = (typeof val1 === 'number' && typeof valLast === 'number') ? `${valLast - val1}${unit}` : '-';
+                
+                // Create data for all periods
+                const periodValues = periodData.map(assessment => {
+                  const value = assessment?.[key];
+                  return typeof value === 'number' ? `${value}${unit}` : '-';
+                });
+                
                 return {
                     name,
-                    week1: typeof week1?.[key] === 'number' ? `${week1[key]}${unit}` : '-',
-                    week4: typeof week4?.[key] === 'number' ? `${week4[key]}${unit}` : '-',
-                    week8: typeof val8 === 'number' ? `${val8}${unit}` : '-',
+                    periodValues,
                     progress
                 };
             };
@@ -4764,10 +4891,54 @@
                 createRowData('readingSpeed', 'Reading Speed (WPM)', ' WPM'),
                 createRowData('comprehension', 'Comprehension')
             ];
-            const finalLevel = getPhilIriLevel(week8?.wordRecognition, week8?.comprehension);
+            const finalLevel = getPhilIriLevel(lastAssessment?.wordRecognition, lastAssessment?.comprehension);
 
-            return { student, tableRows, finalLevel };
-        }, [selectedStudentId, students, assessments]);
+            return { student, tableRows, finalLevel, totalPeriods };
+        }, [selectedStudentId, students, assessments, settings]);
+
+        const handleDownloadProgressReport = () => {
+          if (!reportData) return;
+          
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF();
+          
+          doc.setFontSize(20).setFont("helvetica", "bold").text("EchoText Progress Report", 105, 22, { align: 'center' });
+          doc.setFontSize(12).setFont("helvetica", "normal");
+          doc.text(`Student:`, 14, 40).setFont("helvetica", "bold").text(`${reportData.student.firstName} ${reportData.student.lastName}`, 34, 40);
+          doc.setFont("helvetica", "normal").text(`Grade:`, 14, 47).setFont("helvetica", "bold").text(`${reportData.student.gradeLevel === 'Kinder' ? 'Kindergarten' : `Grade ${reportData.student.gradeLevel}`}`, 30, 47);
+          doc.setFont("helvetica", "normal").text(`Date:`, 150, 40).setFont("helvetica", "bold").text(new Date().toLocaleDateString(), 162, 40);
+          doc.setFont("helvetica", "normal").text(`Evaluated by:`, 14, 54).setFont("helvetica", "bold").text(`${teacherName || 'Teacher'}`, 42, 54);
+          doc.setLineWidth(0.5).line(14, 60, 196, 60);
+          
+          // Report period information
+          doc.setFontSize(11).text(`Report Period: ${settings.totalWeeks} ${settings.reportPeriod}`, 14, 68);
+          doc.setFontSize(11).text(`PHIL-IRI Level: ${reportData.finalLevel.level}`, 150, 68);
+          
+          // Create table data
+          const tableData = [
+            ['Assessment Area', ...Array.from({ length: reportData.totalPeriods }, (_, i) => 
+              `${settings.reportPeriod === 'weeks' ? 'Week' : 'Day'} ${i + 1}`), 'Progress']
+          ];
+          
+          reportData.tableRows.forEach(row => {
+            tableData.push([row.name, ...row.periodValues, row.progress]);
+          });
+          
+          doc.autoTable({
+            startY: 80,
+            head: [tableData[0]],
+            body: tableData.slice(1),
+            theme: 'grid',
+            headStyles: { fillColor: [44, 62, 80] },
+            styles: { fontSize: 9 },
+            columnStyles: {
+              0: { cellWidth: 45 },
+              ...Array.from({ length: reportData.totalPeriods + 1 }, (_, i) => ({ cellWidth: 25 }))
+            }
+          });
+          
+          doc.save(`Progress_Report_${reportData.student.firstName}_${reportData.student.lastName}.pdf`);
+        };
 
         return (
             <div>
@@ -4802,25 +4973,42 @@
                   <div className="p-6">
                     {activeTab === 'progress' ? (
                       <div>
-                        <div className="grid grid-cols-3 gap-6 mb-6">
-                          <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700">Select Student</label>
-                            <select 
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
-                                value={selectedStudentId}
-                                onChange={e => setSelectedStudentId(e.target.value)}
-                            >
-                                <option value="">Select a student</option>
-                                {students.map(s => <option key={s.id} value={s.id.toString()}>{s.firstName} {s.lastName}</option>)}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700">PHIL IRI Level</label>
-                            <div className="mt-1">
-                                <span className={`px-4 py-2 text-sm font-bold text-white rounded-full ${reportData?.finalLevel.badgeClass || 'bg-gray-400'}`}>
-                                    {reportData?.finalLevel.level || 'Not Assessed'}
-                                </span>
+                        <div className="flex justify-between items-center mb-6">
+                          <div className="grid grid-cols-3 gap-6 flex-1">
+                            <div className="col-span-2">
+                              <label className="block text-sm font-medium text-gray-700">Select Student</label>
+                              <select 
+                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                                  value={selectedStudentId}
+                                  onChange={e => setSelectedStudentId(e.target.value)}
+                              >
+                                  <option value="">Select a student</option>
+                                  {students.map(s => <option key={s.id} value={s.id.toString()}>{s.firstName} {s.lastName}</option>)}
+                              </select>
                             </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700">PHIL IRI Level</label>
+                              <div className="mt-1">
+                                  <span className={`px-4 py-2 text-sm font-bold text-white rounded-full ${reportData?.finalLevel.badgeClass || 'bg-gray-400'}`}>
+                                      {reportData?.finalLevel.level || 'Not Assessed'}
+                                  </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 ml-4">
+                            <button 
+                              onClick={() => setIsSettingsModalOpen(true)}
+                              className="px-4 py-2 text-sm text-white bg-warning rounded-md hover:bg-yellow-600"
+                            >
+                              Settings
+                            </button>
+                            <button 
+                              onClick={handleDownloadProgressReport}
+                              disabled={!reportData}
+                              className="px-4 py-2 text-sm text-white bg-primary rounded-md hover:bg-blue-600 disabled:opacity-50"
+                            >
+                              Download PDF
+                            </button>
                           </div>
                         </div>
                         {reportData ? (
@@ -4833,25 +5021,28 @@
                                     <p><strong>Student Name:</strong> {reportData.student.firstName} {reportData.student.lastName}</p>
                                     <p><strong>Date of Report:</strong> {new Date().toLocaleDateString()}</p>
                                     <p><strong>Grade Level:</strong> {reportData.student.gradeLevel === 'Kinder' ? 'Kindergarten' : `Grade ${reportData.student.gradeLevel}`}</p>
-                                    <p><strong>Week:</strong> 8 of 8</p>
+                                    <p><strong>Report Period:</strong> {settings.totalWeeks} {settings.reportPeriod}</p>
                                     <p><strong>Evaluated by:</strong> {teacherName || 'Teacher'}</p>
+                                    <p><strong>PHIL-IRI Level:</strong> {reportData.finalLevel.level}</p>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="min-w-full border">
                                         <thead className="bg-primary text-white"><tr>
                                             <th className="font-semibold p-3 text-left border">Assessment Area</th>
-                                            <th className="font-semibold p-3 text-center border">Week 1</th>
-                                            <th className="font-semibold p-3 text-center border">Week 4</th>
-                                            <th className="font-semibold p-3 text-center border">Week 8</th>
+                                            {Array.from({ length: reportData.totalPeriods }, (_, i) => (
+                                              <th key={i} className="font-semibold p-3 text-center border">
+                                                {settings.reportPeriod === 'weeks' ? 'Week' : 'Day'} {i + 1}
+                                              </th>
+                                            ))}
                                             <th className="font-semibold p-3 text-center border">Progress</th>
                                         </tr></thead>
                                         <tbody className="divide-y">
                                             {reportData.tableRows.map(row => (
                                                 <tr key={row.name} className="odd:bg-white even:bg-gray-50">
                                                     <td className="p-3 font-medium border">{row.name}</td>
-                                                    <td className="p-3 text-center border">{row.week1}</td>
-                                                    <td className="p-3 text-center border">{row.week4}</td>
-                                                    <td className="p-3 text-center border">{row.week8}</td>
+                                                    {row.periodValues.map((value, index) => (
+                                                      <td key={index} className="p-3 text-center border">{value}</td>
+                                                    ))}
                                                     <td className="p-3 text-center border">{row.progress}</td>
                                                 </tr>
                                             ))}
@@ -4870,6 +5061,13 @@
                     )}
                   </div>
                 </div>
+                
+                <ProgressReportSettingsModal
+                  isOpen={isSettingsModalOpen}
+                  onClose={() => setIsSettingsModalOpen(false)}
+                  settings={settings}
+                  updateSettings={updateSettings}
+                />
             </div>
         );
       };

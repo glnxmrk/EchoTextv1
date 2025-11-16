@@ -298,6 +298,82 @@
         background: linear-gradient(135deg, #3498db 0%, #2c3e50 100%);
         color: white;
       }
+      
+      /* NEW: Bar graph styles */
+      .bar-graph {
+        display: flex;
+        align-items: flex-end;
+        height: 200px;
+        padding: 10px;
+        border-bottom: 1px solid #e2e8f0;
+        border-left: 1px solid #e2e8f0;
+      }
+      .bar {
+        flex: 1;
+        margin: 0 2px;
+        background: linear-gradient(to top, #3498db, #2c3e50);
+        border-radius: 4px 4px 0 0;
+        position: relative;
+        transition: all 0.3s ease;
+      }
+      .bar:hover {
+        opacity: 0.8;
+        transform: scale(1.05);
+      }
+      .bar-label {
+        position: absolute;
+        bottom: -25px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 0.75rem;
+        color: #4a5568;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bar-value {
+        position: absolute;
+        top: -25px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 0.75rem;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+      
+      /* NEW: Fixed header and sidebar styles */
+      .fixed-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      }
+      
+      .fixed-sidebar {
+        position: fixed;
+        top: 60px; /* Height of header */
+        left: 0;
+        bottom: 0;
+        width: 16rem; /* w-64 */
+        z-index: 900;
+        overflow-y: auto;
+      }
+      
+      .main-content {
+        margin-left: 16rem; /* w-64 */
+        margin-top: 60px; /* Height of header */
+        min-height: calc(100vh - 60px);
+      }
+      
+      /* NEW: Modal gradient styles */
+      .modal-gradient-header {
+        background: linear-gradient(135deg, #3498db 0%, #2c3e50 100%);
+        color: white;
+      }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -615,6 +691,20 @@
       // NEW: Custom hook for progress report settings
       const useProgressReportSettings = () => {
         const [settings, setSettings] = useLocalStorage('echoText-progressReportSettings', {
+          totalWeeks: 8,
+          reportPeriod: 'weeks' // 'weeks' or 'days'
+        });
+        
+        const updateSettings = (newSettings) => {
+          setSettings(prev => ({ ...prev, ...newSettings }));
+        };
+        
+        return [settings, updateSettings];
+      };
+
+      // NEW: Custom hook for assessment settings
+      const useAssessmentSettings = () => {
+        const [settings, setSettings] = useLocalStorage('echoText-assessmentSettings', {
           totalWeeks: 8,
           reportPeriod: 'weeks' // 'weeks' or 'days'
         });
@@ -1252,7 +1342,7 @@
       const EyeIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg> );
       const EyeOffIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg> );
 
-      // From components/Modal.tsx
+      // UPDATED: From components/Modal.tsx - Added gradient to modal header
       const Modal = ({ isOpen, onClose, title, children, footer }) => {
         if (!isOpen) return null;
 
@@ -1262,9 +1352,9 @@
                     className="bg-white rounded-lg shadow-xl w-full max-w-2xl m-4 animate-fade-in-down"
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <div className="flex justify-between items-center p-4 border-b">
-                        <h3 className="text-xl font-semibold text-gray-800">{title}</h3>
-                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                    <div className="modal-gradient-header rounded-t-lg p-4 border-b flex justify-between items-center">
+                        <h3 className="text-xl font-semibold text-white">{title}</h3>
+                        <button onClick={onClose} className="text-white hover:text-gray-200">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                         </button>
                     </div>
@@ -1281,7 +1371,7 @@
         );
       };
       
-      // From components/Sidebar.tsx
+      // UPDATED: From components/Sidebar.tsx - Made sidebar fixed
       const Sidebar = ({ activeModule, setActiveModule }) => {
         const navItems = [
             { id: Module.Dashboard, label: 'Dashboard', icon: DashboardIcon },
@@ -1295,7 +1385,7 @@
         ];
 
         return (
-            <aside className="w-64 bg-secondary text-white flex-shrink-0">
+            <aside className="fixed-sidebar bg-secondary text-white flex-shrink-0">
                 <nav className="flex flex-col p-2">
                     {navItems.map(item => (
                         <a
@@ -1443,6 +1533,102 @@
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Set the total number of {tempSettings.reportPeriod === 'weeks' ? 'weeks' : 'days'} to include in progress reports.
+                </p>
+              </div>
+              
+              <div className="flex justify-end gap-2 pt-4">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-blue-600"
+                >
+                  Save Settings
+                </button>
+              </div>
+            </div>
+          </Modal>
+        );
+      };
+
+      // NEW: Assessment Settings Modal Component
+      const AssessmentSettingsModal = ({ isOpen, onClose, settings, updateSettings }) => {
+        const [tempSettings, setTempSettings] = useState(settings);
+        
+        useEffect(() => {
+          setTempSettings(settings);
+        }, [settings, isOpen]);
+        
+        const handleSave = () => {
+          updateSettings(tempSettings);
+          onClose();
+        };
+        
+        const handlePeriodChange = (period) => {
+          setTempSettings(prev => ({
+            ...prev,
+            reportPeriod: period
+          }));
+        };
+        
+        return (
+          <Modal isOpen={isOpen} onClose={onClose} title="Assessment Settings">
+            <div className="space-y-4">
+              <div className="bg-blue-50 p-4 rounded-md border border-blue-200">
+                <p className="text-sm text-blue-700">
+                  Configure how many weeks or days of assessments should be available for tracking.
+                </p>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Assessment Period Type</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="reportPeriod"
+                      value="weeks"
+                      checked={tempSettings.reportPeriod === 'weeks'}
+                      onChange={() => handlePeriodChange('weeks')}
+                      className="form-radio h-4 w-4 text-primary"
+                    />
+                    <span className="ml-2">Weeks</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="reportPeriod"
+                      value="days"
+                      checked={tempSettings.reportPeriod === 'days'}
+                      onChange={() => handlePeriodChange('days')}
+                      className="form-radio h-4 w-4 text-primary"
+                    />
+                    <span className="ml-2">Days</span>
+                  </label>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Total {tempSettings.reportPeriod === 'weeks' ? 'Weeks' : 'Days'} for Assessments
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={tempSettings.reportPeriod === 'weeks' ? '52' : '365'}
+                  value={tempSettings.totalWeeks}
+                  onChange={(e) => setTempSettings(prev => ({
+                    ...prev,
+                    totalWeeks: parseInt(e.target.value) || 1
+                  }))}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Set the total number of {tempSettings.reportPeriod === 'weeks' ? 'weeks' : 'days'} available for assessments.
                 </p>
               </div>
               
@@ -2744,9 +2930,10 @@
         );
       };
 
-      // From components/Dashboard.tsx
+      // UPDATED: Dashboard Component with corrected reading progress and weeks completed
       const Dashboard = ({ students, assessments, attendance }) => {
         const [selectedStudentId, setSelectedStudentId] = useState('');
+        const [settings] = useAssessmentSettings();
 
         const getPhilIriLevel = (wordRecognition, comprehension) => {
             if (wordRecognition === undefined || comprehension === undefined) return { level: 'Not Assessed', class: 'bg-gray-400 text-white' };
@@ -2777,8 +2964,18 @@
                 }
             });
             const avgProgress = assessedStudents > 0 ? Math.round(totalProgress / assessedStudents) : 0;
-            return { totalStudents, avgAttendance, avgProgress, weeksCompleted: 8 };
-        }, [students, attendance, assessments]);
+            
+            // CORRECTED: Calculate actual weeks completed based on assessment data
+            let weeksCompleted = 0;
+            Object.values(assessments).forEach(studentAssessments => {
+                if (studentAssessments.length > 0) {
+                    const maxWeek = Math.max(...studentAssessments.map(a => a.week));
+                    weeksCompleted = Math.max(weeksCompleted, maxWeek);
+                }
+            });
+            
+            return { totalStudents, avgAttendance, avgProgress, weeksCompleted: Math.min(weeksCompleted, settings.totalWeeks) };
+        }, [students, attendance, assessments, settings]);
 
         const recentAssessments = useMemo(() => {
             const allAssessments = [];
@@ -2804,6 +3001,22 @@
             return studentAssessments[studentAssessments.length - 1];
         }, [selectedStudentId, assessments]);
 
+        // NEW: Student progress data for bar graph
+        const studentProgressData = useMemo(() => {
+            return students.map(student => {
+                const studentAssessments = assessments[student.id] || [];
+                const latestAssessment = studentAssessments.length > 0 
+                    ? studentAssessments[studentAssessments.length - 1] 
+                    : null;
+                
+                return {
+                    name: `${student.firstName} ${student.lastName}`,
+                    progress: latestAssessment ? latestAssessment.wordRecognition : 0,
+                    level: latestAssessment ? getPhilIriLevel(latestAssessment.wordRecognition, latestAssessment.comprehension).level : 'Not Assessed'
+                };
+            }, [students, assessments]);
+        }, [students, assessments]);
+
         const ProgressBar = ({ value, color, label, text }) => (
             <div className="mb-3">
                 <label className="form-label text-sm text-gray-600">{label}</label>
@@ -2818,6 +3031,49 @@
             </div>
         );
 
+        // NEW: Bar Graph Component
+        const BarGraph = ({ data, title }) => {
+            const maxValue = Math.max(...data.map(item => item.progress), 100);
+            
+            return (
+                <div className="bg-white p-4 rounded-lg shadow-md">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-4">{title}</h3>
+                    <div className="bar-graph">
+                        {data.map((item, index) => (
+                            <div 
+                                key={index} 
+                                className="bar" 
+                                style={{ height: `${(item.progress / maxValue) * 100}%` }}
+                                title={`${item.name}: ${item.progress}% (${item.level})`}
+                            >
+                                <div className="bar-value">{item.progress}%</div>
+                                <div className="bar-label">
+                                    {item.name.split(' ')[0]}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                        {data.map((item, index) => (
+                            <div key={index} className="flex items-center">
+                                <div 
+                                    className="w-3 h-3 rounded-full mr-2"
+                                    style={{
+                                        backgroundColor: 
+                                            item.level === 'Independent' ? '#2ecc71' :
+                                            item.level === 'Instructional' ? '#3498db' :
+                                            item.level === 'Frustration' ? '#f39c12' :
+                                            item.level === 'Non-Reader' ? '#e74c3c' : '#95a5a6'
+                                    }}
+                                ></div>
+                                <span className="truncate">{item.name}: {item.progress}%</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
       return (
         <div>
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Dashboard</h2>
@@ -2825,10 +3081,10 @@
                 <div className="bg-blue-100 text-primary p-5 rounded-lg shadow-md text-center"><p className="text-3xl font-bold">{stats.totalStudents}</p><p>Students Enrolled</p></div>
                 <div className="bg-green-100 text-success p-5 rounded-lg shadow-md text-center"><p className="text-3xl font-bold">{stats.avgAttendance}%</p><p>Average Attendance</p></div>
                 <div className="bg-yellow-100 text-warning p-5 rounded-lg shadow-md text-center"><p className="text-3xl font-bold">{stats.avgProgress}%</p><p>Reading Progress</p></div>
-                <div className="bg-red-100 text-danger p-5 rounded-lg shadow-md text-center"><p className="text-3xl font-bold">{stats.weeksCompleted}</p><p>Weeks Completed</p></div>
+                <div className="bg-red-100 text-danger p-5 rounded-lg shadow-md text-center"><p className="text-3xl font-bold">{stats.weeksCompleted}/{settings.totalWeeks}</p><p>Weeks Completed</p></div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white rounded-lg shadow-md">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="bg-white rounded-lg shadow-md lg:col-span-2">
                     <div className="px-6 py-4 border-b bg-gradient-to-br from-primary to-secondary text-white rounded-t-lg"><h5 className="text-lg font-semibold">Recent Assessments</h5></div>
                     <div className="p-4">
                         <div className="overflow-x-auto">
@@ -2870,6 +3126,14 @@
                         )}
                     </div>
                 </div>
+            </div>
+            
+            {/* NEW: Student Progress Bar Graph */}
+            <div className="mt-6">
+                <BarGraph 
+                    data={studentProgressData} 
+                    title="Student Reading Progress Overview" 
+                />
             </div>
         </div>
       );
@@ -3012,8 +3276,9 @@
         );
       };
 
-      // From components/Attendance.tsx
+      // UPDATED: AttendanceComponent to use configurable weeks
       const AttendanceComponent = ({ students, attendance, setAttendance }) => {
+        const [settings] = useAssessmentSettings();
         const [currentWeek, setCurrentWeek] = useState(1);
         const [weeklyData, setWeeklyData] = useState(attendance[currentWeek] || {});
 
@@ -3034,13 +3299,13 @@
         const handleSaveAttendance = () => {
             const updatedAttendance = { ...attendance, [currentWeek]: weeklyData };
             setAttendance(updatedAttendance);
-            alert('Attendance for Week ' + currentWeek + ' saved successfully!');
+            alert('Attendance for ' + (settings.reportPeriod === 'weeks' ? 'Week ' : 'Day ') + currentWeek + ' saved successfully!');
         };
 
         const attendanceSummary = useMemo(() => {
             return students.map(student => {
                 let presentCount = 0;
-                const weeklyStatuses = Array.from({ length: 8 }, (_, i) => {
+                const weeklyStatuses = Array.from({ length: settings.totalWeeks }, (_, i) => {
                     const week = i + 1;
                     const record = attendance[week]?.[student.id];
                     if (record?.status === 'present') {
@@ -3051,25 +3316,25 @@
                 return {
                     studentName: `${student.firstName} ${student.lastName}`,
                     statuses: weeklyStatuses,
-                    total: `${presentCount}/8`
+                    total: `${presentCount}/${settings.totalWeeks}`
                 };
-            }, [students, attendance]);
-        }, [students, attendance]);
+            }, [students, attendance, settings]);
+        }, [students, attendance, settings]);
 
         return (
             <div>
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">Attendance Tracking</h2>
                 <div className="bg-white rounded-lg shadow-md mb-6">
                     <div className="px-6 py-4 border-b flex justify-between items-center">
-                        <h5 className="text-lg font-semibold mb-0">8-Week Attendance Record</h5>
+                        <h5 className="text-lg font-semibold mb-0">{settings.totalWeeks}-{settings.reportPeriod === 'weeks' ? 'Week' : 'Day'} Attendance Record</h5>
                         <div className="flex items-center gap-4">
                             <select
                                 className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
                                 value={currentWeek}
                                 onChange={e => setCurrentWeek(parseInt(e.target.value))}
                             >
-                                {Array.from({ length: 8 }, (_, i) => (
-                                    <option key={i + 1} value={i + 1}>Week {i + 1}</option>
+                                {Array.from({ length: settings.totalWeeks }, (_, i) => (
+                                    <option key={i + 1} value={i + 1}>{settings.reportPeriod === 'weeks' ? 'Week ' : 'Day '}{i + 1}</option>
                                 ))}
                             </select>
                             <button onClick={handleSaveAttendance} className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-blue-600">Save</button>
@@ -3121,7 +3386,7 @@
                             <table className="min-w-full divide-y divide-gray-200 border">
                                 <thead className="bg-gray-50"><tr>
                                     <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase border">Student</th>
-                                    {Array.from({ length: 8 }, (_, i) => <th key={i} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase border">W{i + 1}</th>)}
+                                    {Array.from({ length: settings.totalWeeks }, (_, i) => <th key={i} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase border">{settings.reportPeriod === 'weeks' ? 'W' : 'D'}{i + 1}</th>)}
                                     <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase border">Total</th>
                                 </tr></thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -3766,7 +4031,7 @@
           );
       };
 
-      // UPDATED: ReadingAssessment component with Unlocking Difficulties
+      // UPDATED: ReadingAssessment component with Unlocking Difficulties and configurable weeks
       const ReadingAssessment = ({ students, passages, setPassages, onSaveAssessment, teacherName }) => {
           const [selectedStudent, setSelectedStudent] = useState('');
           const [selectedPassageId, setSelectedPassageId] = useState(Object.keys(passages)[0] || '');
@@ -3782,8 +4047,10 @@
           const [isPassageModalOpen, setIsPassageModalOpen] = useState(false);
           const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
           const [isUnlockingDifficultiesOpen, setIsUnlockingDifficultiesOpen] = useState(false);
+          const [isAssessmentSettingsOpen, setIsAssessmentSettingsOpen] = useState(false);
           const [studentAnswers, setStudentAnswers] = useState({});
           const [hoveredWord, setHoveredWord] = useState(null);
+          const [settings, updateSettings] = useAssessmentSettings();
 
           const { 
             voices, 
@@ -4215,7 +4482,7 @@
                       {Object.keys(passages).map(id => <option key={id} value={id}>{passages[parseInt(id, 10)].title}</option>)}
                     </select>
                     <select value={selectedWeek} onChange={e => setSelectedWeek(e.target.value)} className="block w-full rounded-md border-gray-300">
-                      {Array.from({ length: 8 }, (_, i) => i + 1).map(week => <option key={week} value={week}>Week {week}</option>)}
+                      {Array.from({ length: settings.totalWeeks }, (_, i) => i + 1).map(week => <option key={week} value={week}>{settings.reportPeriod === 'weeks' ? 'Week ' : 'Day '}{week}</option>)}
                     </select>
                   </div>
                   
@@ -4224,6 +4491,8 @@
                         <button onClick={() => setIsQuestionModalOpen(true)} className="px-3 py-2 text-sm text-white bg-primary rounded-md hover:bg-blue-700 whitespace-nowrap">Manage Questions</button>
                         {/* NEW: Unlocking Difficulties Button */}
                         <button onClick={() => setIsUnlockingDifficultiesOpen(true)} className="px-3 py-2 text-sm text-white bg-warning rounded-md hover:bg-yellow-700 whitespace-nowrap">Unlocking Difficulties</button>
+                        {/* NEW: Assessment Settings Button */}
+                        <button onClick={() => setIsAssessmentSettingsOpen(true)} className="px-3 py-2 text-sm text-white bg-secondary rounded-md hover:bg-gray-700 whitespace-nowrap">Assessment Settings</button>
                   </div>
                   
                   <div className="bg-gray-50 border-l-4 border-primary p-4 rounded-r-md">
@@ -4420,6 +4689,13 @@
                 onAddWord={addDifficultWord}
                 onRemoveWord={removeDifficultWord}
                 onUpdateWord={updateDifficultWord}
+              />
+              {/* NEW: Assessment Settings Modal */}
+              <AssessmentSettingsModal
+                isOpen={isAssessmentSettingsOpen}
+                onClose={() => setIsAssessmentSettingsOpen(false)}
+                settings={settings}
+                updateSettings={updateSettings}
               />
             </div>
           );
@@ -4974,7 +5250,7 @@
                     {activeTab === 'progress' ? (
                       <div>
                         <div className="flex justify-between items-center mb-6">
-                          <div className="grid grid-cols-3 gap-6 flex-1">
+                          <div className="grid grid-cols-3 gap-6">
                             <div className="col-span-2">
                               <label className="block text-sm font-medium text-gray-700">Select Student</label>
                               <select 
@@ -5183,7 +5459,7 @@
                   <p className="text-gray-600 text-sm">
                     This app was made possible through the efforts of <br /><strong>
 Rosavelia O. Jimenez</strong> and <strong>Glenn Mark S. Presores</strong> <br />
-of San Jose Integrated School, Quezon I District.
+of San Jose Integrated School, Quezon I District, Division of Bukidnon.
                   </p>
                 </div>
                 
@@ -5236,7 +5512,7 @@ of San Jose Integrated School, Quezon I District.
         );
       };
 
-      // From App.tsx
+      // UPDATED: From App.tsx - Added fixed header and sidebar
       const App = () => {
           const [activeModule, setActiveModule] = useState(Module.Dashboard);
           const [students, setStudents] = useLocalStorage('echoText-students', sampleStudents);
@@ -5328,7 +5604,7 @@ of San Jose Integrated School, Quezon I District.
           if (!isLoggedIn) {
             return (
               <div className="min-h-screen flex flex-col">
-                <header className="login-gradient text-white shadow-md">
+                <header className="fixed-header login-gradient text-white shadow-md w-full">
                   <div className="container mx-auto px-4">
                     <div className="flex justify-between items-center py-3">
                       <div className="flex items-center gap-3">
@@ -5338,7 +5614,7 @@ of San Jose Integrated School, Quezon I District.
                     </div>
                   </div>
                 </header>
-                <div className="flex-1 flex items-center justify-center bg-gray-100">
+                <div className="flex-1 flex items-center justify-center bg-gray-100 mt-16">
                   <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
                     <div className="login-gradient rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
                       <BookReaderIcon className="w-8 h-8 text-white" />
@@ -5366,7 +5642,7 @@ of San Jose Integrated School, Quezon I District.
 
           return (
               <div className="min-h-screen flex flex-col">
-                <header className="login-gradient text-white shadow-md">
+                <header className="fixed-header login-gradient text-white shadow-md w-full">
                   <div className="container mx-auto px-4">
                     <div className="flex justify-between items-center py-3">
                       <div className="flex items-center gap-3">
@@ -5395,7 +5671,7 @@ of San Jose Integrated School, Quezon I District.
                 </header>
                 <div className="flex flex-1" style={{ height: 'calc(100vh - 60px)' }}>
                   <Sidebar activeModule={activeModule} setActiveModule={setActiveModule} />
-                  <main className="flex-1 p-6 bg-gray-100 overflow-y-auto">
+                  <main className="main-content p-6 bg-gray-100 overflow-y-auto">
                     {renderModule()}
                   </main>
                 </div>

@@ -4925,15 +4925,17 @@
             headStyles: { fillColor: [44, 62, 80] }
           });
           
-          // Student Reading
-          doc.setFontSize(14).setFont("helvetica", "bold").text("Student Reading", 14, doc.lastAutoTable.finalY + 15);
+          // Student Reading - FIXED: Added proper spacing to prevent overlap
+          const studentReadingY = doc.lastAutoTable.finalY + 25;
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Student Reading", 14, studentReadingY - 10);
           doc.setFontSize(10).setFont("helvetica", "normal");
           const studentReadingLines = doc.splitTextToSize(selectedAnalysis.studentReading, 180);
-          doc.text(studentReadingLines, 14, doc.lastAutoTable.finalY + 25);
+          doc.text(studentReadingLines, 14, studentReadingY);
           
-          // Detailed Miscues
+          // Detailed Miscues - FIXED: Added proper spacing
           if (selectedAnalysis.analysisResult.miscues.length > 0) {
-            doc.setFontSize(14).setFont("helvetica", "bold").text("Detailed Miscue Analysis", 14, doc.lastAutoTable.finalY + 45);
+            const miscueStartY = studentReadingY + (studentReadingLines.length * 5) + 20;
+            doc.setFontSize(14).setFont("helvetica", "bold").text("Detailed Miscue Analysis", 14, miscueStartY);
             
             const miscueTableData = selectedAnalysis.analysisResult.miscues.map((miscue, index) => [
               index + 1,
@@ -4944,7 +4946,7 @@
             ]);
             
             doc.autoTable({
-              startY: doc.lastAutoTable.finalY + 55,
+              startY: miscueStartY + 10,
               head: [['#', 'Type', 'Original Word', 'Student Read', 'Explanation']],
               body: miscueTableData,
               theme: 'grid',

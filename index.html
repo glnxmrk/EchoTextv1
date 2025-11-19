@@ -639,7 +639,7 @@
         };
       };
 
-      // NEW: Custom hook to store miscue analysis data
+      // FIXED: Custom hook to store miscue analysis data with update functionality
       const useMiscueStorage = () => {
         const [miscueData, setMiscueData] = useLocalStorage('echoText-miscueData', {});
         
@@ -666,6 +666,22 @@
           return newEntry.id;
         };
         
+        // FIXED: Added function to update miscue analysis
+        const updateMiscueAnalysis = (studentId, analysisId, updatedAnalysis) => {
+          setMiscueData(prev => {
+            const studentData = prev[studentId] || [];
+            const updatedData = studentData.map(item => 
+              item.id === analysisId 
+                ? { ...item, analysisResult: updatedAnalysis }
+                : item
+            );
+            return {
+              ...prev,
+              [studentId]: updatedData
+            };
+          });
+        };
+        
         const getMiscueDataByStudent = (studentId) => {
           return miscueData[studentId] || [];
         };
@@ -683,6 +699,7 @@
         return {
           miscueData,
           saveMiscueAnalysis,
+          updateMiscueAnalysis, // FIXED: Added this function
           getMiscueDataByStudent,
           deleteMiscueAnalysis
         };
@@ -4031,7 +4048,7 @@
           );
       };
 
-      // UPDATED: ReadingAssessment component with Unlocking Difficulties and configurable weeks
+      // FIXED: ReadingAssessment component with proper miscue updates in localStorage
       const ReadingAssessment = ({ students, passages, setPassages, onSaveAssessment, teacherName }) => {
           const [selectedStudent, setSelectedStudent] = useState('');
           const [selectedPassageId, setSelectedPassageId] = useState(Object.keys(passages)[0] || '');
@@ -4051,6 +4068,7 @@
           const [studentAnswers, setStudentAnswers] = useState({});
           const [hoveredWord, setHoveredWord] = useState(null);
           const [settings, updateSettings] = useAssessmentSettings();
+          const [currentAnalysisId, setCurrentAnalysisId] = useState(null); // FIXED: Track current analysis ID
 
           const { 
             voices, 
@@ -4079,8 +4097,8 @@
             updateDifficultWord 
           } = useDifficultWords();
           
-          // NEW: Use miscue storage hook
-          const { saveMiscueAnalysis } = useMiscueStorage();
+          // FIXED: Use miscue storage hook with update functionality
+          const { saveMiscueAnalysis, updateMiscueAnalysis } = useMiscueStorage();
           
           const mediaRecorderRef = useRef(null);
           const audioChunksRef = useRef([]);
@@ -4103,6 +4121,7 @@
               setAnalysisResult(null);
               setAnalysisError(null);
               setStudentReading('');
+              setCurrentAnalysisId(null); // FIXED: Reset current analysis ID
           }, [selectedPassageId, selectedStudent]);
 
           useEffect(() => {
@@ -4239,15 +4258,16 @@
               const result = await analyzeMiscuesWithGemini(passageText, studentReading);
               setAnalysisResult(result);
               
-              // NEW: Save miscue analysis to storage
+              // FIXED: Save miscue analysis to storage and track the ID
               if (selectedStudent && selectedPassageId) {
-                saveMiscueAnalysis(
+                const analysisId = saveMiscueAnalysis(
                   parseInt(selectedStudent, 10),
                   parseInt(selectedPassageId, 10),
                   result,
                   studentReading,
                   passageText
                 );
+                setCurrentAnalysisId(analysisId); // FIXED: Store the current analysis ID
               }
             } catch (err) {
               setAnalysisError(err.message);
@@ -4380,7 +4400,7 @@
 
           const formatTime = (seconds) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 
-          // Handle miscue updates
+          // FIXED: Handle miscue updates with localStorage persistence
           const handleUpdateMiscue = (index, updatedMiscue) => {
               setAnalysisResult(prev => {
                   const newMiscues = [...prev.miscues];
@@ -4401,7 +4421,7 @@
                     }
                   });
                   
-                  return {
+                  const updatedAnalysis = {
                     ...prev,
                     miscues: newMiscues,
                     summary: {
@@ -4413,10 +4433,21 @@
                       reversals: miscueCounts.Reversal,
                     }
                   };
+                  
+                  // FIXED: Update the analysis in localStorage
+                  if (selectedStudent && currentAnalysisId) {
+                    updateMiscueAnalysis(
+                      parseInt(selectedStudent, 10),
+                      currentAnalysisId,
+                      updatedAnalysis
+                    );
+                  }
+                  
+                  return updatedAnalysis;
               });
           };
 
-          // Handle miscue deletion
+          // FIXED: Handle miscue deletion with localStorage persistence
           const handleDeleteMiscue = (index) => {
               setAnalysisResult(prev => {
                   const newMiscues = [...prev.miscues];
@@ -4437,7 +4468,7 @@
                     }
                   });
                   
-                  return {
+                  const updatedAnalysis = {
                     ...prev,
                     miscues: newMiscues,
                     summary: {
@@ -4449,6 +4480,17 @@
                       reversals: miscueCounts.Reversal,
                     }
                   };
+                  
+                  // FIXED: Update the analysis in localStorage
+                  if (selectedStudent && currentAnalysisId) {
+                    updateMiscueAnalysis(
+                      parseInt(selectedStudent, 10),
+                      currentAnalysisId,
+                      updatedAnalysis
+                    );
+                  }
+                  
+                  return updatedAnalysis;
               });
           };
 
@@ -5008,11 +5050,19 @@
                 >
                   <option value="">Select an analysis</option>
                   {studentMiscueData.map(item => {
-                    const passage = selectedPassage;
+                    // FIXED: Get the passage title correctly
+                    const passageTitle = (() => {
+                      try {
+                        const storedPassages = JSON.parse(localStorage.getItem('echoText-passages') || '{}');
+                        return storedPassages[item.passageId]?.title || 'Unknown Passage';
+                      } catch (e) {
+                        return 'Unknown Passage';
+                      }
+                    })();
                     const date = new Date(item.timestamp).toLocaleDateString();
                     return (
                       <option key={item.id} value={item.id}>
-                        {passage ? passage.title : 'Unknown Passage'} - {date}
+                        {passageTitle} - {date}
                       </option>
                     );
                   })}

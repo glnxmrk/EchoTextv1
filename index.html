@@ -4840,7 +4840,7 @@
         );
       };
 
-      // NEW: Miscue Analysis Report Component for Results & Reports tab
+      // FIXED: Miscue Analysis Report Component for Results & Reports tab
       const MiscueAnalysisReport = ({ students, passages, teacherName }) => {
         const [selectedStudentId, setSelectedStudentId] = useState('');
         const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
@@ -4849,7 +4849,18 @@
         const studentMiscueData = selectedStudentId ? getMiscueDataByStudent(parseInt(selectedStudentId, 10)) : [];
         const selectedAnalysis = studentMiscueData.find(item => item.id === parseInt(selectedAnalysisId, 10));
         const selectedStudent = students.find(s => s.id === parseInt(selectedStudentId, 10));
-        const selectedPassage = selectedAnalysis ? passages[selectedAnalysis.passageId] : null;
+        
+        // FIXED: Get passage from localStorage instead of hardcoded samplePassages
+        const selectedPassage = selectedAnalysis ? 
+          (() => {
+            // Try to get passage from localStorage first
+            try {
+              const storedPassages = JSON.parse(localStorage.getItem('echoText-passages') || '{}');
+              return storedPassages[selectedAnalysis.passageId] || { title: 'Unknown Passage', wordCount: 0 };
+            } catch (e) {
+              return { title: 'Unknown Passage', wordCount: 0 };
+            }
+          })() : null;
         
         const handleDeleteAnalysis = (analysisId) => {
           if (window.confirm('Are you sure you want to delete this miscue analysis?')) {
@@ -4997,7 +5008,7 @@
                 >
                   <option value="">Select an analysis</option>
                   {studentMiscueData.map(item => {
-                    const passage = passages[item.passageId];
+                    const passage = selectedPassage;
                     const date = new Date(item.timestamp).toLocaleDateString();
                     return (
                       <option key={item.id} value={item.id}>

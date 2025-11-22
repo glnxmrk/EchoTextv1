@@ -402,56 +402,15 @@
       ];
       const sampleAttendance = {};
       const sampleAssessments = {};
+      
+      // REMOVED: Sample passages have been removed to allow teachers to add their own
       const samplePassages = {
-          1: {
-              title: "Grade 3 - The Lion and the Mouse",
-              content: `A lion was sleeping in the forest when a mouse ran across his paw. The lion woke up and was about to eat the mouse when the mouse begged for mercy. "Please let me go," said the mouse. "One day I may be able to help you." The lion laughed at the idea that a tiny mouse could help the king of beasts, but he let the mouse go. Days later, the lion was caught in a hunter's net. He struggled but could not break free. He roared in anger. The mouse heard the lion and ran to help. She gnawed through the ropes of the net until the lion was free. "You were right, little mouse," said the lion. "Even the small can help the great."`,
-              wordCount: 150,
-              quiz: [
-                  { id: 1, question: "Why did the lion let the mouse go?", type: 'multiple-choice', points: 1, options: [{letter: 'A', text: 'The mouse was too small to eat.'}, {letter: 'B', text: 'The mouse promised to help him one day.'}, {letter: 'C', text: 'The lion was not hungry.'}, {letter: 'D', text: 'The mouse was a friend.'}], correctAnswer: 'B' },
-                  { id: 2, question: "How did the mouse help the lion?", type: 'multiple-choice', points: 1, options: [{letter: 'A', text: 'She roared to scare hunters.'}, {letter: 'B', text: 'She brought the lion food.'}, {letter: 'C', text: 'She gnawed through the net ropes.'}, {letter: 'D', text: 'She called other animals.'}], correctAnswer: 'C' },
-                  { id: 3, question: "The story teaches that even small friends can be great friends.", type: 'true-false', points: 1, options: [{letter: 'A', text: 'True'}, {letter: 'B', text: 'False'}], correctAnswer: 'A' },
-              ]
-          },
-          2: {
-              title: "Grade 4 - The Tortoise and the Hare",
-              content: `A hare was making fun of a tortoise one day for being so slow. "Do you ever get anywhere?" he asked with a mocking laugh. "Yes," replied the tortoise, "and I get there sooner than you think. I'll run you a race and prove it." The hare was much amused at the idea of running a race with the tortoise, but for the fun of the thing he agreed. The fox was to be the umpire. The race started, and the hare quickly raced ahead. Soon he was so far ahead that he decided to take a nap under a shady tree. The tortoise plodded on steadily. After a time, he passed the sleeping hare. The hare slept far longer than he intended. When he finally woke up, he saw the tortoise just nearing the finish line. The hare ran as fast as he could, but it was too late. The tortoise had won the race.`,
-              wordCount: 180,
-              quiz: [
-                  { id: 1, question: "Why did the hare lose the race?", type: 'multiple-choice', points: 1, options: [{letter: 'A', text: 'He was too slow.'}, {letter: 'B', text: 'He took a nap during the race.'}, {letter: 'C', text: 'He got lost.'}, {letter: 'D', text: 'The tortoise cheated.'}], correctAnswer: 'B' },
-                  { id: 2, question: "The tortoise won because he was steady and persistent.", type: 'true-false', points: 1, options: [{letter: 'A', text: 'True'}, {letter: 'B', text: 'False'}], correctAnswer: 'A' },
-              ]
-          },
-          3: {
-              title: "Grade 5 - The Environment",
-              content: `Our environment is everything that makes up our surroundings. It includes the air we breathe, the water we drink, the land we live on, and all the plants and animals around us. Keeping our environment clean and healthy is important for our survival and well-being. Unfortunately, human activities have caused many environmental problems. Pollution from factories, cars, and waste products has contaminated our air, water, and soil. This pollution can harm human health and damage ecosystems. We can all help protect the environment by reducing, reusing, and recycling materials. Conserving water and energy, planting trees, and using environmentally friendly products are other ways to help. It's important that we all do our part to keep our planet healthy for future generations.`,
-              wordCount: 160,
-              quiz: [
-                  { id: 1, question: "What is a major cause of environmental problems mentioned in the passage?", type: 'multiple-choice', points: 1, options: [{letter: 'A', text: 'Animal activities'}, {letter: 'B', text: 'Natural disasters'}, {letter: 'C', 'text': 'Human activities'}, {letter: 'D', text: 'Lack of sunlight.'}], correctAnswer: 'C' },
-                  { id: 2, question: "What are the three 'R's' to help the environment?", type: 'short-answer', points: 1, correctAnswer: 'Reduce, Reuse, Recycle' },
-              ]
-          }
+        // Passages will be added by teachers through the interface
       };
       
       // NEW: Default difficult words for each passage
       const defaultDifficultWords = {
-        1: [
-          { word: "mercy", definition: "Compassion or forgiveness shown toward someone whom it is within one's power to punish or harm." },
-          { word: "gnawed", definition: "Bitten or chewed on persistently." },
-          { word: "beasts", definition: "Animals, especially large or dangerous ones." }
-        ],
-        2: [
-          { word: "tortoise", definition: "A slow-moving land reptile with a domed shell." },
-          { word: "mocking", definition: "Making fun of someone or something in a cruel way." },
-          { word: "umpire", definition: "A person who rules on the plays in a game or sport." },
-          { word: "plodded", definition: "Walked slowly with heavy steps." }
-        ],
-        3: [
-          { word: "environment", definition: "The surroundings or conditions in which a person, animal, or plant lives." },
-          { word: "pollution", definition: "The presence in or introduction into the environment of harmful substances." },
-          { word: "contaminated", definition: "Made impure by exposure to or addition of a poisonous or polluting substance." },
-          { word: "ecosystems", definition: "A biological community of interacting organisms and their physical environment." }
-        ]
+        // Difficult words will be added by teachers for each passage
       };
       
       // UPDATED: Enhanced Reading Drill Data with lowercase letters and improved pronunciation
@@ -1145,11 +1104,11 @@
         );
       };
 
-      // Fixed miscue analysis to follow Phil-IRI guidelines
+      // FIXED: Improved miscue analysis to properly handle insertions and repetitions
       const analyzeMiscuesWithGemini = async (passage, studentReading) => {
           return new Promise((resolve) => {
             setTimeout(() => {
-              // Clean and normalize both texts
+              // Clean and normalize both texts - remove punctuation for comparison
               const cleanPassage = passage.toLowerCase().replace(/[.,!?"]/g, '');
               const cleanStudentReading = studentReading.toLowerCase().replace(/[.,!?"]/g, '');
               
@@ -1166,6 +1125,7 @@
               // Track repetitions
               const repetitionTracker = {};
               
+              // FIXED: Main alignment algorithm
               while (pIndex < passageWords.length && sIndex < studentWords.length) {
                 const passageWord = passageWords[pIndex];
                 const studentWord = studentWords[sIndex];
@@ -1173,6 +1133,47 @@
                 // Check for exact match first
                 if (passageWord === studentWord) {
                   pIndex++;
+                  sIndex++;
+                  continue;
+                }
+                
+                // FIXED: Check for REPETITION first (repeated word)
+                if (sIndex > 0 && studentWord === studentWords[sIndex - 1]) {
+                  if (!repetitionTracker[studentWord]) {
+                    repetitionTracker[studentWord] = 0;
+                  }
+                  repetitionTracker[studentWord]++;
+                  
+                  if (repetitionTracker[studentWord] <= 2) { // Limit repeated miscues for same word
+                    miscues.push({
+                      type: 'Repetition',
+                      originalWord: passageWord,
+                      studentWord: studentWord,
+                      context: getContext(passageWords, pIndex),
+                      explanation: `Student repeated the word "${studentWord}"`
+                    });
+                  }
+                  sIndex++; // Only move student index forward
+                  continue;
+                }
+                
+                // FIXED: Check for INSERTION first (extra word that doesn't match upcoming passage words)
+                let isInsertion = true;
+                for (let lookahead = 0; lookahead <= 3 && pIndex + lookahead < passageWords.length; lookahead++) {
+                  if (passageWords[pIndex + lookahead] === studentWord) {
+                    isInsertion = false;
+                    break;
+                  }
+                }
+                
+                if (isInsertion) {
+                  miscues.push({
+                    type: 'Insertion',
+                    originalWord: '[none]',
+                    studentWord: studentWord,
+                    context: getContext(passageWords, pIndex),
+                    explanation: `Student inserted the word "${studentWord}"`
+                  });
                   sIndex++;
                   continue;
                 }
@@ -1209,42 +1210,6 @@
                   continue;
                 }
                 
-                // Check for INSERTION (extra word)
-                if (pIndex < passageWords.length && 
-                    passageWord !== studentWord && 
-                    passageWord === studentWords[sIndex + 1]) {
-                  miscues.push({
-                    type: 'Insertion',
-                    originalWord: '[none]',
-                    studentWord: studentWord,
-                    context: getContext(passageWords, pIndex),
-                    explanation: `Student inserted the word "${studentWord}"`
-                  });
-                  sIndex++;
-                  // pIndex stays the same since we're checking the next word
-                  continue;
-                }
-                
-                // Check for REPETITION (repeated word)
-                if (sIndex > 0 && studentWord === studentWords[sIndex - 1]) {
-                  if (!repetitionTracker[studentWord]) {
-                    repetitionTracker[studentWord] = 0;
-                  }
-                  repetitionTracker[studentWord]++;
-                  
-                  if (repetitionTracker[studentWord] <= 2) { // Limit repeated miscues for same word
-                    miscues.push({
-                      type: 'Repetition',
-                      originalWord: passageWord,
-                      studentWord: studentWord,
-                      context: getContext(passageWords, pIndex),
-                      explanation: `Student repeated the word "${studentWord}"`
-                    });
-                  }
-                  sIndex++;
-                  continue;
-                }
-                
                 // Check for REVERSAL (words in wrong order)
                 if (pIndex < passageWords.length - 1 && sIndex < studentWords.length - 1 &&
                     passageWords[pIndex] === studentWords[sIndex + 1] &&
@@ -1261,8 +1226,29 @@
                   continue;
                 }
                 
-                // If no specific miscue detected but words don't match, count as substitution
-                if (passageWord !== studentWord) {
+                // FIXED: If no specific miscue detected but words don't match, try to find next match
+                // This prevents cascading errors after an insertion
+                let foundMatch = false;
+                for (let lookahead = 1; lookahead <= 3 && pIndex + lookahead < passageWords.length; lookahead++) {
+                  if (passageWords[pIndex + lookahead] === studentWord) {
+                    // We found a match ahead in the passage - mark the skipped words as omissions
+                    for (let i = 0; i < lookahead; i++) {
+                      miscues.push({
+                        type: 'Omission',
+                        originalWord: passageWords[pIndex + i],
+                        studentWord: '[omitted]',
+                        context: getContext(passageWords, pIndex + i),
+                        explanation: `Student omitted the word "${passageWords[pIndex + i]}"`
+                      });
+                    }
+                    pIndex += lookahead;
+                    foundMatch = true;
+                    break;
+                  }
+                }
+                
+                if (!foundMatch) {
+                  // If still no match found, count as substitution
                   miscues.push({
                     type: 'Substitution',
                     originalWord: passageWord,
@@ -1270,10 +1256,9 @@
                     context: getContext(passageWords, pIndex),
                     explanation: `Student substituted "${studentWord}" for "${passageWord}"`
                   });
+                  pIndex++;
+                  sIndex++;
                 }
-                
-                pIndex++;
-                sIndex++;
               }
               
               // Check for remaining omissions at the end
@@ -4051,7 +4036,7 @@
       // FIXED: ReadingAssessment component with proper miscue updates in localStorage
       const ReadingAssessment = ({ students, passages, setPassages, onSaveAssessment, teacherName }) => {
           const [selectedStudent, setSelectedStudent] = useState('');
-          const [selectedPassageId, setSelectedPassageId] = useState(Object.keys(passages)[0] || '');
+          const [selectedPassageId, setSelectedPassageId] = useState(Object.keys(passages).length > 0 ? Object.keys(passages)[0] : '');
           const [selectedWeek, setSelectedWeek] = useState('1');
           const [timer, setTimer] = useState(0);
           const [isTiming, setIsTiming] = useState(false);
@@ -4509,7 +4494,7 @@
             return difficultWord ? difficultWord.definition : null;
           };
 
-          if (!currentPassage) return <div className="p-6 bg-white rounded-lg shadow-md">Loading... Please add a passage if none exist.</div>;
+          if (!currentPassage) return <div className="p-6 bg-white rounded-lg shadow-md">No passages available. Please add a passage using the "Manage Passages" button.</div>;
 
           return (
             <div>
@@ -5360,7 +5345,7 @@
                                     <p><strong>Student Name:</strong> {reportData.student.firstName} {reportData.student.lastName}</p>
                                     <p><strong>Date of Report:</strong> {new Date().toLocaleDateString()}</p>
                                     <p><strong>Grade Level:</strong> {reportData.student.gradeLevel === 'Kinder' ? 'Kindergarten' : `Grade ${reportData.student.gradeLevel}`}</p>
-                                    <p><strong>Report Period:</strong> {settings.totalWeeks} {settings.reportPeriod}</p>
+                                    <p><strong>Report Period:</strong> {settings.totalWeeks} ${settings.reportPeriod}</p>
                                     <p><strong>Evaluated by:</strong> {teacherName || 'Teacher'}</p>
                                     <p><strong>PHIL-IRI Level:</strong> {reportData.finalLevel.level}</p>
                                 </div>
@@ -5396,7 +5381,7 @@
                         )}
                       </div>
                     ) : (
-                      <MiscueAnalysisReport students={students} passages={samplePassages} teacherName={teacherName} />
+                      <MiscueAnalysisReport students={students} passages={{}} teacherName={teacherName} />
                     )}
                   </div>
                 </div>

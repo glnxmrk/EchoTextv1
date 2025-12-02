@@ -1483,13 +1483,13 @@
       const analyzeMiscuesWithGemini = async (passage, studentReading) => {
           return new Promise((resolve) => {
             setTimeout(() => {
-              // Clean and normalize both texts - remove punctuation for comparison
-              const cleanPassage = passage.toLowerCase().replace(/[.,!?"]/g, '');
-              const cleanStudentReading = studentReading.toLowerCase().replace(/[.,!?"]/g, '');
+              // Split into words, keeping original case and punctuation for display purposes.
+              const passageWords = passage.split(/\s+/).filter(word => word.length > 0);
+              const studentWords = studentReading.split(/\s+/).filter(word => word.length > 0);
               
-              // Split into words
-              const passageWords = cleanPassage.split(/\s+/).filter(word => word.length > 0);
-              const studentWords = cleanStudentReading.split(/\s+/).filter(word => word.length > 0);
+              // Helper function to normalize words for comparison by removing punctuation and making them lowercase.
+              const normalizeWord = (word) => 
+                word ? word.toLowerCase().replace(/[.,!?"“”:;]/g, '') : '';
               
               const miscues = [];
               
@@ -1498,166 +1498,146 @@
               let sIndex = 0; // student reading index
               
               // Track repetitions
-              const repetitionTracker = {};
+              // const repetitionTracker = {}; // Repetition logic will be re-evaluated post-alignment.
               
-              // FIXED: Main alignment algorithm
-              while (pIndex < passageWords.length && sIndex < studentWords.length) {
-                const passageWord = passageWords[pIndex];
-                const studentWord = studentWords[sIndex];
+              // --- NEW: Word-level Sequence Alignment using Dynamic Programming ---
+              // This implements the Wagner-Fischer algorithm to find the Levenshtein distance
+              // between the two word sequences.
+
+              const A = passageWords.map(normalizeWord);
+              const B = studentWords.map(normalizeWord);
+              const M = A.length;
+              const N = B.length;
+
+              // Costs for different operations. Making substitution more expensive than
+              // an insertion + omission pair encourages the algorithm to prefer gaps.
+              const costSub = 2;
+              const costIns = 1;
+              const costDel = 1;
+
+              // --- Step 1: Build DP Matrix for Word-Level Alignment ---
+              // This uses the Wagner-Fischer algorithm to find the minimum edit
+              // distance between the two word sequences.
+
+              // Initialize DP matrix
+              const dp = Array(M + 1).fill(null).map(() => Array(N + 1).fill(0));
+
+              for (let i = 0; i <= M; i++) dp[i][0] = i * costDel;
+              for (let j = 0; j <= N; j++) dp[0][j] = j * costIns;
+
+              // Fill DP matrix
+              for (let i = 1; i <= M; i++) {
+                for (let j = 1; j <= N; j++) {
+                  const cost = (A[i - 1] === B[j - 1]) ? 0 : costSub;
+                  dp[i][j] = Math.min(
+                    dp[i - 1][j] + costDel,       // Deletion (Omission)
+                    dp[i][j - 1] + costIns,       // Insertion
+                    dp[i - 1][j - 1] + cost      // Substitution or Match
+                  );
+                }
+              }
+
+              // Backtrack to find the alignment path and generate miscues
+              // --- Step 2: Backtrack to get the sequence of edit operations ---
+              // This produces a clean list of operations (match, sub, ins, del)
+              // before we classify them into pedagogical miscues.
+              const alignmentOps = [];
+              let i = M;
+              let j = N;
+              while (i > 0 || j > 0) {
+                const normPassageWord = A[i - 1];
+                const normStudentWord = B[j - 1];
                 
-                // Check for exact match first
-                if (passageWord === studentWord) {
-                  pIndex++;
-                  sIndex++;
+                // Handle reaching the start of one sequence
+                if (i === 0) {
+                  alignmentOps.unshift({ op: 'ins', p_idx: -1, s_idx: j - 1 });
+                  j--;
                   continue;
                 }
-                
-                // FIXED: Check for REPETITION first (repeated word)
-                if (sIndex > 0 && studentWord === studentWords[sIndex - 1]) {
-                  if (!repetitionTracker[studentWord]) {
-                    repetitionTracker[studentWord] = 0;
-                  }
-                  repetitionTracker[studentWord]++;
-                  
-                  if (repetitionTracker[studentWord] <= 2) { // Limit repeated miscues for same word
-                    miscues.push({
-                      type: 'Repetition',
-                      originalWord: passageWord,
-                      studentWord: studentWord,
-                      context: getContext(passageWords, pIndex),
-                      explanation: `Student repeated the word "${studentWord}"`
-                    });
-                  }
-                  sIndex++; // Only move student index forward
+                if (j === 0) {
+                  alignmentOps.unshift({ op: 'del', p_idx: i - 1, s_idx: -1 });
+                  i--;
                   continue;
                 }
-                
-                // FIXED: Check for INSERTION first (extra word that doesn't match upcoming passage words)
-                let isInsertion = true;
-                for (let lookahead = 0; lookahead <= 3 && pIndex + lookahead < passageWords.length; lookahead++) {
-                  if (passageWords[pIndex + lookahead] === studentWord) {
-                    isInsertion = false;
-                    break;
-                  }
+
+                const cost = (normPassageWord === normStudentWord) ? 0 : costSub;
+
+                // Determine which operation led to the current cell
+                if (dp[i][j] === dp[i - 1][j - 1] + cost) {
+                  alignmentOps.unshift({ op: (cost === 0 ? 'match' : 'sub'), p_idx: i - 1, s_idx: j - 1 });
+                  i--;
+                  j--;
+                } else if (dp[i][j] === dp[i][j - 1] + costIns) {
+                  alignmentOps.unshift({ op: 'ins', p_idx: i - 1, s_idx: j - 1 });
+                  j--;
+                } else { // Deletion
+                  alignmentOps.unshift({ op: 'del', p_idx: i - 1, s_idx: j - 1 });
+                  i--;
                 }
-                
-                if (isInsertion) {
-                  miscues.push({
-                    type: 'Insertion',
-                    originalWord: '[none]',
-                    studentWord: studentWord,
-                    context: getContext(passageWords, pIndex),
-                    explanation: `Student inserted the word "${studentWord}"`
-                  });
-                  sIndex++;
-                  continue;
-                }
-                
-                // Check for SUBSTITUTION (different word in same position)
-                if (passageWord !== studentWord && 
-                    sIndex < studentWords.length - 1 && 
-                    passageWords[pIndex + 1] === studentWords[sIndex + 1]) {
-                  miscues.push({
-                    type: 'Substitution',
-                    originalWord: passageWord,
-                    studentWord: studentWord,
-                    context: getContext(passageWords, pIndex),
-                    explanation: `Student substituted "${studentWord}" for "${passageWord}"`
-                  });
-                  pIndex++;
-                  sIndex++;
-                  continue;
-                }
-                
-                // Check for OMISSION (missing word)
-                if (sIndex < studentWords.length && 
-                    passageWord !== studentWord && 
-                    passageWords[pIndex + 1] === studentWord) {
-                  miscues.push({
-                    type: 'Omission',
-                    originalWord: passageWord,
-                    studentWord: '[omitted]',
-                    context: getContext(passageWords, pIndex),
-                    explanation: `Student omitted the word "${passageWord}"`
-                  });
-                  pIndex++;
-                  // sIndex stays the same since we're checking the next word
-                  continue;
-                }
-                
-                // Check for REVERSAL (words in wrong order)
-                if (pIndex < passageWords.length - 1 && sIndex < studentWords.length - 1 &&
-                    passageWords[pIndex] === studentWords[sIndex + 1] &&
-                    passageWords[pIndex + 1] === studentWords[sIndex]) {
-                  miscues.push({
-                    type: 'Reversal',
-                    originalWord: `${passageWords[pIndex]} ${passageWords[pIndex + 1]}`,
-                    studentWord: `${studentWords[sIndex]} ${studentWords[sIndex + 1]}`,
-                    context: getContext(passageWords, pIndex),
-                    explanation: `Student reversed the order of "${passageWords[pIndex]}" and "${passageWords[pIndex + 1]}"`
-                  });
-                  pIndex += 2;
-                  sIndex += 2;
-                  continue;
-                }
-                
-                // FIXED: If no specific miscue detected but words don't match, try to find next match
-                // This prevents cascading errors after an insertion
-                let foundMatch = false;
-                for (let lookahead = 1; lookahead <= 3 && pIndex + lookahead < passageWords.length; lookahead++) {
-                  if (passageWords[pIndex + lookahead] === studentWord) {
-                    // We found a match ahead in the passage - mark the skipped words as omissions
-                    for (let i = 0; i < lookahead; i++) {
+              }
+              
+              // Post-processing for reversals could be added here by inspecting the miscues array
+              // for adjacent insertion/omission pairs that are reversed. For now, this is omitted
+              // for clarity and to focus on the core substitution/insertion/omission logic.
+              // --- Step 3: Classify operations into miscues, handling repetitions ---
+              // This loop iterates through the aligned operations and creates the final
+              // list of pedagogical miscues.
+              for (let k = 0; k < alignmentOps.length; k++) {
+                const op = alignmentOps[k];
+                const p_idx = op.p_idx;
+                const s_idx = op.s_idx;
+
+                // Check for Repetition: an insertion where the inserted word
+                // is the same as the previously matched passage word.
+                if (op.op === 'ins' && k > 0) {
+                  const prevOp = alignmentOps[k - 1];
+                  if (prevOp.s_idx !== -1) { // Ensure the previous operation involved a student word
+                    const insertedWord = normalizeWord(studentWords[s_idx]);
+                    const prevStudentWord = normalizeWord(studentWords[prevOp.s_idx]);
+                    if (insertedWord === prevStudentWord) {
                       miscues.push({
-                        type: 'Omission',
-                        originalWord: passageWords[pIndex + i],
-                        studentWord: '[omitted]',
-                        context: getContext(passageWords, pIndex + i),
-                        explanation: `Student omitted the word "${passageWords[pIndex + i]}"`
+                        type: 'Repetition',
+                        originalWord: '[repetition]',
+                        studentWord: studentWords[s_idx],
+                        context: getContext(passageWords, prevOp.p_idx),
+                        explanation: `Student repeated the word "${studentWords[s_idx]}"`,
                       });
+                      continue; // Skip default insertion handling
                     }
-                    pIndex += lookahead;
-                    foundMatch = true;
-                    break;
                   }
                 }
-                
-                if (!foundMatch) {
-                  // If still no match found, count as substitution
-                  miscues.push({
-                    type: 'Substitution',
-                    originalWord: passageWord,
-                    studentWord: studentWord,
-                    context: getContext(passageWords, pIndex),
-                    explanation: `Student substituted "${studentWord}" for "${passageWord}"`
-                  });
-                  pIndex++;
-                  sIndex++;
+
+                // Handle standard miscues
+                switch (op.op) {
+                  case 'sub':
+                    miscues.push({
+                      type: 'Substitution',
+                      originalWord: passageWords[p_idx],
+                      studentWord: studentWords[s_idx],
+                      context: getContext(passageWords, p_idx),
+                      explanation: `Student substituted "${studentWords[s_idx]}" for "${passageWords[p_idx]}"`
+                    });
+                    break;
+                  case 'del':
+                    miscues.push({
+                      type: 'Omission',
+                      originalWord: passageWords[p_idx],
+                      studentWord: '[omitted]',
+                      context: getContext(passageWords, p_idx),
+                      explanation: `Student omitted the word "${passageWords[p_idx]}"`
+                    });
+                    break;
+                  case 'ins':
+                    miscues.push({
+                      type: 'Insertion',
+                      originalWord: '[none]',
+                      studentWord: studentWords[s_idx],
+                      context: getContext(passageWords, p_idx),
+                      explanation: `Student inserted the word "${studentWords[s_idx]}"`
+                    });
+                    break;
+                  // 'match' operations are ignored
                 }
-              }
-              
-              // Check for remaining omissions at the end
-              while (pIndex < passageWords.length) {
-                miscues.push({
-                  type: 'Omission',
-                  originalWord: passageWords[pIndex],
-                  studentWord: '[omitted]',
-                  context: getContext(passageWords, pIndex),
-                  explanation: `Student omitted the word "${passageWords[pIndex]}"`
-                });
-                pIndex++;
-              }
-              
-              // Check for remaining insertions at the end
-              while (sIndex < studentWords.length) {
-                miscues.push({
-                  type: 'Insertion',
-                  originalWord: '[none]',
-                  studentWord: studentWords[sIndex],
-                  context: 'End of passage',
-                  explanation: `Student inserted the word "${studentWords[sIndex]}"`
-                });
-                sIndex++;
               }
               
               // Count miscues by type

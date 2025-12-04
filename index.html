@@ -424,6 +424,48 @@
       .form-toggle button:not(.active):hover {
         background: #f8f9fa;
       }
+
+      /* NEW: Vocabulary practice styles */
+      .vocab-card {
+        border: 2px solid transparent;
+        transition: all 0.3s ease;
+      }
+      .vocab-card.selected {
+        border-color: #3498db;
+        transform: scale(1.02);
+      }
+      .vocab-card.correct {
+        border-color: #2ecc71;
+        background-color: #e8f8f1;
+      }
+      .vocab-card.incorrect {
+        border-color: #e74c3c;
+        background-color: #fdedec;
+      }
+      .vocab-card.reveal-correct {
+        border-color: #2ecc71;
+      }
+
+      /* NEW: Prosody practice styles */
+      .prosody-score-card {
+        transition: all 0.3s ease;
+      }
+      .prosody-score-card:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+      }
+      .progress-ring {
+        transform: rotate(-90deg);
+      }
+      .progress-ring__circle {
+        transition: stroke-dashoffset 0.5s;
+      }
+      .recording-dot {
+        width: 12px;
+        height: 12px;
+        background-color: #e74c3c;
+        border-radius: 50%;
+      }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -497,7 +539,9 @@
         Comprehension: 'comprehension',
         Results: 'results',
         Guidelines: 'guidelines',
+        Vocabulary: 'vocabulary', // NEW: Added Vocabulary module
         ReadingDrill: 'reading-drill', // NEW: Added Reading Drill module
+        Prosody: 'prosody', // NEW: Added Prosody module
       };
 
       // From constants.ts
@@ -701,6 +745,74 @@
           removeDifficultWord,
           getDifficultWordsForPassage,
           updateDifficultWord
+        };
+      };
+
+      // NEW: Custom hook for vocabulary list
+      const useVocabularyList = () => {
+        const [vocabulary, setVocabulary] = useLocalStorage('echoText-vocabulary', [
+          { id: 1, word: 'diligent', definition: 'Showing care and conscientiousness in one\'s work or duties.' },
+          { id: 2, word: 'ephemeral', definition: 'Lasting for a very short time.' },
+          { id: 3, word: 'benevolent', definition: 'Well meaning and kindly.' },
+          { id: 4, word: 'ubiquitous', definition: 'Present, appearing, or found everywhere.' }
+        ]);
+
+        const addWord = (word, definition) => {
+          const newWord = { id: Date.now(), word, definition };
+          setVocabulary(prev => [...prev, newWord]);
+        };
+
+        const updateWord = (id, updatedWord, updatedDefinition) => {
+          setVocabulary(prev => prev.map(item => 
+            item.id === id ? { ...item, word: updatedWord, definition: updatedDefinition } : item
+          ));
+        };
+
+        const deleteWord = (id) => {
+          setVocabulary(prev => prev.filter(item => item.id !== id));
+        };
+
+        return {
+          vocabulary,
+          addWord,
+          updateWord,
+          deleteWord
+        };
+      };
+
+      // NEW: Custom hook for student vocabulary progress
+      const useVocabularyProgress = () => {
+        const [progress, setProgress] = useLocalStorage('echoText-vocabularyProgress', {});
+        // In a real app, you'd add functions to save and retrieve progress per student.
+        return [progress, setProgress];
+      };
+
+      // NEW: Custom hook for prosody results
+      const useProsodyStorage = () => {
+        const [prosodyData, setProsodyData] = useLocalStorage('echoText-prosodyData', {});
+
+        const saveProsodyResult = (studentId, passageId, result) => {
+          const newEntry = {
+            id: Date.now(),
+            studentId,
+            passageId,
+            timestamp: new Date().toISOString(),
+            result,
+          };
+
+          setProsodyData(prev => {
+            const studentData = prev[studentId] || [];
+            return {
+              ...prev,
+              [studentId]: [...studentData, newEntry]
+            };
+          });
+          return newEntry.id;
+        };
+
+        return {
+          prosodyData,
+          saveProsodyResult,
         };
       };
 
@@ -1571,7 +1683,7 @@
                   alignmentOps.unshift({ op: 'ins', p_idx: i - 1, s_idx: j - 1 });
                   j--;
                 } else { // Deletion
-                  alignmentOps.unshift({ op: 'del', p_idx: i - 1, s_idx: j - 1 });
+                  alignmentOps.unshift({ op: 'del', p_idx: i - 1, s_idx: -1 });
                   i--;
                 }
               }
@@ -1590,16 +1702,18 @@
                 // Check for Repetition: an insertion where the inserted word
                 // is the same as the previously matched passage word.
                 if (op.op === 'ins' && k > 0) {
-                  const prevOp = alignmentOps[k - 1];
-                  if (prevOp.s_idx !== -1) { // Ensure the previous operation involved a student word
-                    const insertedWord = normalizeWord(studentWords[s_idx]);
-                    const prevStudentWord = normalizeWord(studentWords[prevOp.s_idx]);
-                    if (insertedWord === prevStudentWord) {
+                  // Find the most recent previous operation that involved a student word.
+                  const prevStudentOp = alignmentOps.slice(0, k).reverse().find(o => o.s_idx !== -1);
+                  if (prevStudentOp) {
+                    const insertedWord = normalizeWord(studentWords[op.s_idx]);
+                    const prevStudentWord = normalizeWord(studentWords[prevStudentOp.s_idx]);
+                    // A repetition occurs if the inserted word is the same as the last read word, and it's the very next word.
+                    if (insertedWord === prevStudentWord && op.s_idx === prevStudentOp.s_idx + 1) {
                       miscues.push({
                         type: 'Repetition',
                         originalWord: '[repetition]',
                         studentWord: studentWords[s_idx],
-                        context: getContext(passageWords, prevOp.p_idx),
+                        context: getContext(passageWords, prevStudentOp.p_idx), // Context is the word that was repeated.
                         explanation: `Student repeated the word "${studentWords[s_idx]}"`,
                       });
                       continue; // Skip default insertion handling
@@ -1688,6 +1802,8 @@
       const QuizIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v2h-2V7zm0 4h2v6h-2v-6z"/></svg> );
       const ResultsIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h18v-2H3zm3.41-8.755L2 12.665V14h19v-1.95l-7.258-4.475-3.324 2.6L3.41 8.245zM4 5h16v2H4V5z"/></svg> );
       const GuidelinesIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10.011 10.011 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8.009 8.009 0 0 1-8 8zm1-5v2h-2v-2h2zm0-8v6h-2V7h2z"/></svg> );
+      const VocabularyIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M20 5.333V20a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5.333a2 2 0 0 1 .586-1.414l.001-.001 7-4a2 2 0 0 1 2.828 0l7 4a2 2 0 0 1 .585 1.415zM12 2.828l-6.237 3.564L12 10l6.237-3.608L12 2.828zM6 8.333v10.334h12V8.333L12 12 6 8.333z"/></svg> );
+      const ProsodyIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9h2V7H3v2zm0 4h2v-2H3v2zm0 4h2v-2H3v2zm4-8h2V7H7v2zm0 4h2v-2H7v2zm0 4h2v-2H7v2zm4-8h2V7h-2v2zm0 4h2v-2h-2v2zm0 4h2v-2h-2v2zm4-8h2V7h-2v2zm0 4h2v-2h-2v2zm4-4h2V7h-2v2zm-4 4h2v-2h-2v2zm4 0h2v-2h-2v2zm-4 4h2v-2h-2v2zm4 0h2v-2h-2v2z"/></svg> );
       const EditIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M16.707 2.293a1 1 0 0 1 1.414 0l4 4a1 1 0 0 1 0 1.414l-11 11A1 1 0 0 1 10 19H5a1 1 0 0 1-1-1v-5a1 1 0 0 1 .293-.707l11-11.001zM16 6.414l-9 9V17h1.586l9-9L16 6.414zM18.414 5l-1-1L19 2.414 20.586 4 18.414 5z"/></svg> );
       const TrashIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M7 6V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v2h3a1 1 0 0 1 1 1v1H3V7a1 1 0 0 1 1-1h3zm2 0h6V4H9v2zM5 9v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9H5zm4 2h2v7H9v-7zm4 0h2v7h-2v-7z"/></svg> );
       const PlusIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg> );
@@ -1700,7 +1816,7 @@
       const EyeIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg> );
       const EyeOffIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/></svg> );
 
-      // UPDATED: From components/Modal.tsx - Added gradient to modal header
+      // From components/Modal.tsx
       const Modal = ({ isOpen, onClose, title, children, footer }) => {
         if (!isOpen) return null;
 
@@ -1710,7 +1826,7 @@
                     className="bg-white rounded-lg shadow-xl w-full max-w-2xl m-4 animate-fade-in-down"
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <div className="modal-gradient-header rounded-t-lg p-4 border-b flex justify-between items-center">
+                    <div className="modal-gradient-header rounded-t-lg p-4 flex justify-between items-center">
                         <h3 className="text-xl font-semibold text-white">{title}</h3>
                         <button onClick={onClose} className="text-white hover:text-gray-200">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -1739,6 +1855,8 @@
             { id: Module.Comprehension, label: 'Comprehension Quiz', icon: QuizIcon },
             { id: Module.Results, label: 'Results & Reports', icon: ResultsIcon },
             { id: Module.Guidelines, label: 'PHIL IRI Guidelines', icon: GuidelinesIcon },
+            { id: Module.Vocabulary, label: 'Vocabulary', icon: VocabularyIcon }, // NEW: Added Vocabulary
+            { id: Module.Prosody, label: 'Prosody', icon: ProsodyIcon }, // NEW: Added Prosody
             { id: Module.ReadingDrill, label: 'Reading Drill', icon: DrillIcon }, // NEW: Added Reading Drill
         ];
 
@@ -3110,6 +3228,523 @@
               </div>
             )}
           </Modal>
+        );
+      };
+
+      // UPDATED: Vocabulary Management Modal
+      const VocabularyManagementModal = ({ isOpen, onClose, vocabulary, addWord, updateWord, deleteWord }) => {
+        const [editingItem, setEditingItem] = useState(null); // { id, word, definition }
+        const [newItem, setNewItem] = useState({ word: '', definition: '' });
+
+        const handleSave = (e) => {
+          if (editingItem) {
+            if (editingItem.word.trim() && editingItem.definition.trim()) {
+              updateWord(editingItem.id, editingItem.word, editingItem.definition);
+              setEditingItem(null);
+            } else {
+              alert('Word and definition cannot be empty.');
+            }
+          }
+        };
+
+        const handleAdd = (e) => {
+          if (newItem.word.trim() && newItem.definition.trim()) {
+            addWord(newItem.word, newItem.definition);
+            setNewItem({ word: '', definition: '' });
+          } else {
+            alert('Word and definition cannot be empty.');
+          }
+        };
+
+        return (
+          <Modal isOpen={isOpen} onClose={onClose} title="Manage Vocabulary">
+            <div className="space-y-4">
+              <div className="p-4 border rounded-md bg-gray-50">
+                <form onSubmit={handleAdd}>
+                  <h4 className="font-semibold text-lg mb-2">Add New Word</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                    <input
+                      type="text"
+                      placeholder="Word"
+                      value={newItem.word}
+                      onChange={(e) => setNewItem(prev => ({ ...prev, word: e.target.value }))}
+                      className="w-full p-2 border rounded-md"
+                      required
+                    />
+                    <input
+                      type="text"
+                      placeholder="Definition"
+                      value={newItem.definition}
+                      onChange={(e) => setNewItem(prev => ({ ...prev, definition: e.target.value }))}
+                      className="w-full p-2 border rounded-md"
+                      required
+                    />
+                  </div>
+                  <button type="submit" className="px-4 py-2 text-sm text-white bg-primary rounded-md hover:bg-blue-600">
+                    Add Word
+                  </button>
+                </form>
+              </div>
+
+              <div className="mt-6">
+                <h4 className="text-lg font-semibold text-gray-800 mb-3">Vocabulary List</h4>
+                <div className="space-y-3 max-h-80 overflow-y-auto">
+                  {vocabulary.map(item => (
+                    <div key={item.id} className="p-3 bg-gray-50 rounded-md border">
+                      {editingItem?.id === item.id ? (                        
+                        <form onSubmit={handleSave} className="space-y-2">
+                            <input
+                              type="text"
+                              value={editingItem.word}
+                              onChange={(e) => setEditingItem(prev => ({ ...prev, word: e.target.value }))}
+                              className="w-full p-2 border rounded-md"
+                              required
+                            />
+                            <textarea
+                              value={editingItem.definition}
+                              onChange={(e) => setEditingItem(prev => ({ ...prev, definition: e.target.value }))}
+                              className="w-full p-2 border rounded-md"
+                              rows="2"
+                              required
+                            />
+                            <div className="flex gap-2">
+                              <button type="submit" className="px-3 py-1 text-sm text-white bg-success rounded-md">Save</button>
+                              <button type="button" onClick={() => setEditingItem(null)} className="px-3 py-1 text-sm text-gray-700 bg-gray-200 rounded-md">Cancel</button>
+                            </div>
+                        </form>
+                      ) : (
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-semibold text-gray-800">{item.word}</p>
+                            <p className="text-sm text-gray-600 mt-1">{item.definition}</p>
+                          </div>
+                          <div className="flex gap-2 ml-4">
+                            <button onClick={() => setEditingItem({ ...item })} className="text-warning hover:text-yellow-600"><EditIcon className="w-5 h-5" /></button>
+                            <button onClick={() => deleteWord(item.id)} className="text-danger hover:text-red-600"><TrashIcon className="w-5 h-5" /></button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Modal>
+        );
+      };
+
+      // UPDATED: Vocabulary Practice Component with Review and Practice sections
+      const VocabularyPractice = () => {
+        const { vocabulary, addWord, updateWord, deleteWord } = useVocabularyList();
+        const [isManagementModalOpen, setIsManagementModalOpen] = useState(false);
+        const [activeTab, setActiveTab] = useState('review'); // 'review' or 'practice'
+        const [practiceWords, setPracticeWords] = useState([]);
+        const [currentWordIndex, setCurrentWordIndex] = useState(0);
+        const [options, setOptions] = useState([]);
+        const [selectedAnswer, setSelectedAnswer] = useState(null);
+        const [isAnswered, setIsAnswered] = useState(false);
+        const [score, setScore] = useState({ correct: 0, incorrect: 0 });
+        const [isPracticeActive, setIsPracticeActive] = useState(false);
+        const [searchTerm, setSearchTerm] = useState('');
+
+        const shuffleArray = (array) => {
+          return array.map(value => ({ value, sort: Math.random() }))
+            .sort((a, b) => a.sort - b.sort)
+            .map(({ value }) => value);
+        };
+
+        const startPractice = () => {
+          if (vocabulary.length < 4) {
+            alert("You need at least 4 words in your vocabulary list to start the practice.");
+            return;
+          }
+          setScore({ correct: 0, incorrect: 0 });
+          setCurrentWordIndex(0);
+          const shuffled = shuffleArray(vocabulary);
+          setPracticeWords(shuffled);
+          generateOptions(shuffled[0], shuffled);
+          setIsPracticeActive(true);
+        };
+
+        const generateOptions = (correctWord, wordList) => {
+          // Get 3 random incorrect definitions
+          const distractors = wordList
+            .filter(w => w.id !== correctWord.id)
+            .slice(0, 3)
+            .map(w => w.definition);
+          
+          const allOptions = shuffleArray([correctWord.definition, ...distractors]);
+          setOptions(allOptions);
+          setSelectedAnswer(null);
+          setIsAnswered(false);
+        };
+
+        const handleSelectAnswer = (definition) => {
+          if (isAnswered) return;
+          setSelectedAnswer(definition);
+          const correctDefinition = practiceWords[currentWordIndex].definition;
+          if (definition === correctDefinition) {
+            setScore(prev => ({ ...prev, correct: prev.correct + 1 }));
+          } else {
+            setScore(prev => ({ ...prev, incorrect: prev.incorrect + 1 }));
+          }
+          setIsAnswered(true);
+        };
+
+        const handleNextWord = () => {
+          if (currentWordIndex < practiceWords.length - 1) {
+            const nextIndex = currentWordIndex + 1;
+            setCurrentWordIndex(nextIndex);
+            generateOptions(practiceWords[nextIndex], practiceWords);
+          } else {
+            // End of practice
+            setIsPracticeActive(false);
+          }
+        };
+
+        const filteredVocabulary = vocabulary.filter(item => 
+          item.word.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          item.definition.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+
+        const renderReviewSection = () => (
+          <div className="bg-white p-6 rounded-lg shadow-md">
+            <div className="mb-4">
+              <input
+                type="text"
+                placeholder="Search words or definitions..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full p-2 border rounded-md"
+              />
+            </div>
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+              {filteredVocabulary.length > 0 ? filteredVocabulary.map(item => (
+                <div key={item.id} className="p-4 bg-gray-50 rounded-md border">
+                  <p className="font-semibold text-gray-800 text-lg">{item.word}</p>
+                  <p className="text-sm text-gray-600 mt-1">{item.definition}</p>
+                </div>
+              )) : (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No words found. {vocabulary.length > 0 ? 'Try a different search term.' : 'Add some words to get started!'}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+
+        const renderPracticeSection = () => {
+          if (!isPracticeActive) {
+            return (
+              <div className="text-center bg-white p-10 rounded-lg shadow-md">
+                  {score.correct + score.incorrect > 0 && (
+                    <div className="mb-8">
+                      <h3 className="text-xl font-semibold text-gray-700 mb-4">Last Practice Score</h3>
+                      <p className="text-4xl font-bold text-success">{Math.round((score.correct / (score.correct + score.incorrect)) * 100)}%</p>
+                      <p className="text-gray-600">{score.correct} correct out of {score.correct + score.incorrect}</p>
+                    </div>
+                  )}
+                  <button onClick={startPractice} className="px-8 py-4 text-lg font-semibold text-white bg-success rounded-lg shadow-lg hover:bg-green-600 transition-transform transform hover:scale-105">
+                    Start New Practice
+                  </button>
+                  <p className="text-sm text-gray-500 mt-4">You need at least 4 words to start.</p>
+              </div>
+            );
+          }
+
+          const currentWord = practiceWords[currentWordIndex];
+          return currentWord ? (            <div className="bg-white p-6 rounded-lg shadow-md">
+                <div className="flex justify-between items-center mb-6 pb-4 border-b">
+                  <p className="text-lg font-semibold">Word {currentWordIndex + 1} of {practiceWords.length}</p>
+                  <div className="flex gap-4 text-sm">
+                    <span className="px-3 py-1 bg-green-100 text-success rounded-full font-medium">Correct: {score.correct}</span>
+                    <span className="px-3 py-1 bg-red-100 text-danger rounded-full font-medium">Incorrect: {score.incorrect}</span>
+                  </div>
+                </div>
+
+                <div className="text-center mb-8">
+                  <h3 className="text-4xl font-bold text-primary mb-2">{currentWord.word}</h3>
+                  <p className="text-gray-500">Choose the correct definition below.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {options.map((definition, index) => {
+                    const isCorrect = definition === currentWord.definition;
+                    const isSelected = definition === selectedAnswer;
+                    let cardClass = '';
+                    if (isAnswered) {
+                      if (isCorrect) cardClass = 'reveal-correct';
+                      if (isSelected && !isCorrect) cardClass = 'incorrect';
+                      if (isSelected && isCorrect) cardClass = 'correct';
+                    } else if (isSelected) {
+                      cardClass = 'selected';
+                    }
+
+                    return (
+                      <div
+                        key={index}
+                        onClick={() => handleSelectAnswer(definition)}
+                        className={`vocab-card p-4 rounded-lg shadow-sm cursor-pointer border-2 ${cardClass}`}
+                      >
+                        <p>{definition}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {isAnswered && (
+                  <div className="text-center mt-8">
+                    <button onClick={handleNextWord} className="px-6 py-3 text-white bg-primary rounded-lg hover:bg-blue-600">
+                      {currentWordIndex < practiceWords.length - 1 ? 'Next Word' : 'Finish Practice'}
+                    </button>
+                  </div>
+                )}
+            </div>
+          ) : null;
+        }
+
+        return (          
+          <div>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800">Vocabulary</h2>
+              <button onClick={() => setIsManagementModalOpen(true)} className="flex items-center gap-2 px-4 py-2 text-white bg-primary rounded-md shadow-sm hover:bg-blue-600">
+                <EditIcon className="w-5 h-5" /> Manage Vocabulary
+              </button>
+            </div>
+
+            <div className="mb-6">
+              <div className="flex border-b">
+                <button
+                  onClick={() => setActiveTab('review')}
+                  className={`flex-1 px-4 py-3 text-center font-medium ${activeTab === 'review' ? 'text-primary border-b-2 border-primary' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Review
+                </button>
+                <button
+                  onClick={() => setActiveTab('practice')}
+                  className={`flex-1 px-4 py-3 text-center font-medium ${activeTab === 'practice' ? 'text-primary border-b-2 border-primary' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Practice
+                </button>
+              </div>
+            </div>
+
+            {activeTab === 'review' ? renderReviewSection() : renderPracticeSection()}
+
+            <VocabularyManagementModal isOpen={isManagementModalOpen} onClose={() => setIsManagementModalOpen(false)} vocabulary={vocabulary} addWord={addWord} updateWord={updateWord} deleteWord={deleteWord} />
+          </div>
+        );
+      };
+
+      // NEW: Prosody Practice Component
+      const ProsodyPractice = ({ students, passages }) => {
+        const [selectedStudent, setSelectedStudent] = useState('');
+        const [selectedPassageId, setSelectedPassageId] = useState(Object.keys(passages).length > 0 ? Object.keys(passages)[0] : '');
+        const [isRecording, setIsRecording] = useState(false);
+        const [recordingTime, setRecordingTime] = useState(0);
+        const [audioURL, setAudioURL] = useState(null);
+        const [analysisResult, setAnalysisResult] = useState(null);
+        const [isLoading, setIsLoading] = useState(false);
+        const [isSaved, setIsSaved] = useState(false);
+
+        const mediaRecorderRef = useRef(null);
+        const audioChunksRef = useRef([]);
+        const timerIntervalRef = useRef(null);
+
+        const { saveProsodyResult } = useProsodyStorage();
+        const currentPassage = useMemo(() => passages[parseInt(selectedPassageId, 10)], [passages, selectedPassageId]);
+
+        const startRecording = async () => {
+          if (!selectedStudent) {
+            alert("Please select a student first.");
+            return;
+          }
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorderRef.current = new MediaRecorder(stream);
+            audioChunksRef.current = [];
+            setAudioURL(null);
+            setAnalysisResult(null);
+            setIsSaved(false);
+
+            mediaRecorderRef.current.ondataavailable = (event) => {
+              audioChunksRef.current.push(event.data);
+            };
+
+            mediaRecorderRef.current.onstop = () => {
+              const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+              const url = URL.createObjectURL(audioBlob);
+              setAudioURL(url);
+              stream.getTracks().forEach(track => track.stop());
+            };
+
+            mediaRecorderRef.current.start();
+            setIsRecording(true);
+            setRecordingTime(0);
+            timerIntervalRef.current = setInterval(() => {
+              setRecordingTime(prev => prev + 1);
+            }, 1000);
+          } catch (err) {
+            console.error("Error starting recording:", err);
+            alert("Could not start recording. Please ensure microphone access is allowed.");
+          }
+        };
+
+        const stopRecording = () => {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+          }
+          setIsRecording(false);
+          clearInterval(timerIntervalRef.current);
+        };
+
+        const handleToggleRecording = () => {
+          isRecording ? stopRecording() : startRecording();
+        };
+
+        const simulateProsodyAnalysis = () => {
+          setIsLoading(true);
+          setTimeout(() => {
+            const wordCount = currentPassage.wordCount || 0;
+            const wpm = recordingTime > 0 ? Math.round((wordCount / recordingTime) * 60) : 0;
+
+            // Simulate scores
+            const rateScore = Math.min(100, Math.max(0, 100 - Math.abs(wpm - 100) * 2)); // Ideal WPM around 100
+            const phrasingScore = Math.floor(Math.random() * 31) + 65; // 65-95
+            const intonationScore = Math.floor(Math.random() * 36) + 60; // 60-95
+            const stressScore = Math.floor(Math.random() * 31) + 68; // 68-98
+
+            const overallScore = Math.round((rateScore + phrasingScore + intonationScore + stressScore) / 4);
+
+            // Generate feedback
+            let feedback = [];
+            if (rateScore < 75) feedback.push(wpm > 120 ? "Pacing is a bit too fast." : "Try to read a little faster.");
+            else feedback.push("Good pacing.");
+            if (phrasingScore < 80) feedback.push("Pay attention to natural pauses at commas and periods.");
+            else feedback.push("Excellent phrasing.");
+            if (intonationScore < 75) feedback.push("Vary your pitch more to add expression.");
+            else feedback.push("Good intonation.");
+
+            const result = {
+              scores: {
+                phrasing: phrasingScore,
+                intonation: intonationScore,
+                stress: stressScore,
+                rate: rateScore,
+              },
+              wpm,
+              overallScore,
+              feedback: feedback.join(' '),
+            };
+            setAnalysisResult(result);
+            
+            // Automatically save the result
+            if (selectedStudent) {
+              saveProsodyResult(parseInt(selectedStudent, 10), parseInt(selectedPassageId, 10), result);
+              setIsSaved(true);
+            }
+
+            setIsLoading(false);
+          }, 2000);
+        };
+
+        const ProgressRing = ({ score }) => {
+          const radius = 50;
+          const circumference = 2 * Math.PI * radius;
+          const offset = circumference - (score / 100) * circumference;
+          let colorClass = 'text-success';
+          if (score < 80) colorClass = 'text-primary';
+          if (score < 60) colorClass = 'text-warning';
+          if (score < 40) colorClass = 'text-danger';
+
+          return (
+            <div className="relative flex items-center justify-center">
+              <svg className="progress-ring w-32 h-32" viewBox="0 0 120 120">
+                <circle className="text-gray-200" strokeWidth="10" stroke="currentColor" fill="transparent" r={radius} cx="60" cy="60" />
+                <circle className={`progress-ring__circle ${colorClass}`} strokeWidth="10" strokeDasharray={circumference} strokeDashoffset={offset} stroke="currentColor" fill="transparent" r={radius} cx="60" cy="60" />
+              </svg>
+              <span className="absolute text-3xl font-bold">{score}</span>
+            </div>
+          );
+        };
+
+        if (!currentPassage) return <div className="p-6 bg-white rounded-lg shadow-md">No passages available. Please add a passage in the Reading Assessment tab.</div>;
+
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">Prosody Practice</h2>
+            <div className="bg-white rounded-lg shadow-md p-6 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <select value={selectedStudent} onChange={e => setSelectedStudent(e.target.value)} className="block w-full rounded-md border-gray-300">
+                  <option value="">Select a student</option>
+                  {students.map(s => <option key={s.id} value={s.id.toString()}>{s.firstName} {s.lastName}</option>)}
+                </select>
+                <select value={selectedPassageId} onChange={e => setSelectedPassageId(e.target.value)} className="block w-full rounded-md border-gray-300">
+                  {Object.keys(passages).map(id => <option key={id} value={id}>{passages[parseInt(id, 10)].title}</option>)}
+                </select>
+              </div>
+
+              <div className="bg-gray-50 border-l-4 border-primary p-4 rounded-r-md">
+                <h4 className="text-xl font-bold text-gray-800 mb-2">{currentPassage.title}</h4>
+                <p className="text-gray-700 leading-relaxed">{currentPassage.content}</p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-4 p-4 border rounded-lg">
+                <button onClick={handleToggleRecording} className={`flex items-center gap-3 px-6 py-3 text-lg font-semibold text-white rounded-lg shadow-md transition-transform transform hover:scale-105 ${isRecording ? 'bg-danger' : 'bg-success'}`}>
+                  {isRecording ? <div className="recording-dot animate-pulse"></div> : <MicrophoneIcon className="w-6 h-6" />}
+                  {isRecording ? 'Stop Recording' : 'Start Recording'}
+                </button>
+                {isRecording && <span className="text-lg font-mono">Time: {new Date(recordingTime * 1000).toISOString().substr(14, 5)}</span>}
+              </div>
+
+              {audioURL && (
+                <div className="p-4 border rounded-lg bg-gray-50 space-y-4">
+                  <h3 className="text-lg font-semibold">Recording & Analysis</h3>
+                  <audio src={audioURL} controls className="w-full" />
+                  <button onClick={simulateProsodyAnalysis} disabled={isLoading} className="px-4 py-2 bg-secondary text-white font-bold rounded-lg shadow-md hover:bg-gray-700 disabled:opacity-50">
+                    {isLoading ? 'Analyzing...' : 'Analyze Prosody'}
+                  </button>
+                </div>
+              )}
+
+              {isLoading && <LoadingSpinner />}
+
+              {analysisResult && (
+                <div className="p-6 border-2 border-dashed rounded-lg">
+                  <h3 className="text-2xl font-bold text-center mb-6">Prosody Analysis Report</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-center">
+                    <div className="md:col-span-2 flex justify-center">
+                      <ProgressRing score={analysisResult.overallScore} />
+                    </div>
+                    <div className="md:col-span-3 space-y-4">
+                      <div className="prosody-score-card flex justify-between items-center bg-blue-50 p-3 rounded-lg">
+                        <span className="font-semibold">Phrasing</span><span className="font-bold text-blue-600">{analysisResult.scores.phrasing}/100</span>
+                      </div>
+                      <div className="prosody-score-card flex justify-between items-center bg-green-50 p-3 rounded-lg">
+                        <span className="font-semibold">Intonation</span><span className="font-bold text-green-600">{analysisResult.scores.intonation}/100</span>
+                      </div>
+                      <div className="prosody-score-card flex justify-between items-center bg-yellow-50 p-3 rounded-lg">
+                        <span className="font-semibold">Stress</span><span className="font-bold text-yellow-600">{analysisResult.scores.stress}/100</span>
+                      </div>
+                      <div className="prosody-score-card flex justify-between items-center bg-red-50 p-3 rounded-lg">
+                        <span className="font-semibold">Rate ({analysisResult.wpm} WPM)</span><span className="font-bold text-red-600">{analysisResult.scores.rate}/100</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-6 text-center bg-gray-100 p-4 rounded-lg">
+                    <p className="font-semibold">Feedback:</p>
+                    <p className="text-gray-700">{analysisResult.feedback}</p>
+                  </div>
+                  {isSaved && (
+                    <div className="mt-6 text-center text-sm text-success font-medium flex items-center justify-center gap-1">
+                      <svg className="w-5 h-5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                      Result automatically saved to student's record.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         );
       };
 
@@ -5881,10 +6516,288 @@
         );
       };
 
+      // NEW: Prosody Report Component for Results & Reports tab
+      const ProsodyReport = ({ students, passages, teacherName }) => {
+        const [selectedStudentId, setSelectedStudentId] = useState('');
+        const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
+        const { prosodyData } = useProsodyStorage();
+
+        const studentProsodyData = selectedStudentId ? prosodyData[parseInt(selectedStudentId, 10)] || [] : [];
+        const selectedAnalysis = studentProsodyData.find(item => item.id === parseInt(selectedAnalysisId, 10));
+        const selectedStudent = students.find(s => s.id === parseInt(selectedStudentId, 10));
+
+        const getPassageTitle = (passageId) => {
+          try {
+            const storedPassages = JSON.parse(localStorage.getItem('echoText-passages') || '{}');
+            return storedPassages[passageId]?.title || 'Unknown Passage';
+          } catch (e) {
+            return 'Unknown Passage';
+          }
+        };
+
+        const handleDownloadReport = () => {
+          if (!selectedAnalysis || !selectedStudent) return;
+
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF();
+
+          doc.setFontSize(20).setFont("helvetica", "bold").text("EchoText Prosody Report", 105, 22, { align: 'center' });
+          doc.setFontSize(12).setFont("helvetica", "normal");
+          doc.text(`Student:`, 14, 40).setFont("helvetica", "bold").text(`${selectedStudent.firstName} ${selectedStudent.lastName}`, 34, 40);
+          doc.setFont("helvetica", "normal").text(`Grade:`, 14, 47).setFont("helvetica", "bold").text(`${selectedStudent.gradeLevel === 'Kinder' ? 'Kindergarten' : `Grade ${selectedStudent.gradeLevel}`}`, 30, 47);
+          doc.setFont("helvetica", "normal").text(`Date:`, 150, 40).setFont("helvetica", "bold").text(new Date(selectedAnalysis.timestamp).toLocaleDateString(), 162, 40);
+          doc.setFont("helvetica", "normal").text(`Evaluated by:`, 14, 54).setFont("helvetica", "bold").text(`${teacherName || 'Teacher'}`, 42, 54);
+          doc.setLineWidth(0.5).line(14, 60, 196, 60);
+
+          const passageTitle = getPassageTitle(selectedAnalysis.passageId);
+          doc.setFontSize(11).text(`Passage: ${passageTitle}`, 14, 68);
+
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Prosody Analysis Summary", 14, 85);
+          const { scores, overallScore, wpm, feedback } = selectedAnalysis.result;
+
+          doc.autoTable({
+            startY: 95,
+            head: [['Metric', 'Score']],
+            body: [
+              ['Overall Score', `${overallScore}/100`],
+              ['Phrasing', `${scores.phrasing}/100`],
+              ['Intonation', `${scores.intonation}/100`],
+              ['Stress', `${scores.stress}/100`],
+              ['Rate', `${scores.rate}/100 (${wpm} WPM)`],
+            ],
+            theme: 'striped',
+            headStyles: { fillColor: [44, 62, 80] }
+          });
+
+          const feedbackY = doc.lastAutoTable.finalY + 15;
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Feedback", 14, feedbackY);
+          doc.setFontSize(10).setFont("helvetica", "normal");
+          const feedbackLines = doc.splitTextToSize(feedback, 180);
+          doc.text(feedbackLines, 14, feedbackY + 8);
+
+          doc.save(`Prosody_Report_${selectedStudent.firstName}_${selectedStudent.lastName}_${new Date(selectedAnalysis.timestamp).toISOString().split('T')[0]}.pdf`);
+        };
+
+        const ProgressRing = ({ score, size = 'w-24 h-24', stroke = 8, fontSize = 'text-2xl' }) => {
+          const radius = 40;
+          const circumference = 2 * Math.PI * radius;
+          const offset = circumference - (score / 100) * circumference;
+          let colorClass = 'text-success';
+          if (score < 80) colorClass = 'text-primary';
+          if (score < 60) colorClass = 'text-warning';
+          if (score < 40) colorClass = 'text-danger';
+
+          return (
+            <div className={`relative flex items-center justify-center ${size}`}>
+              <svg className="progress-ring w-full h-full" viewBox="0 0 100 100">
+                <circle className="text-gray-200" strokeWidth={stroke} stroke="currentColor" fill="transparent" r={radius} cx="50" cy="50" />
+                <circle className={`progress-ring__circle ${colorClass}`} strokeWidth={stroke} strokeDasharray={circumference} strokeDashoffset={offset} stroke="currentColor" fill="transparent" r={radius} cx="50" cy="50" />
+              </svg>
+              <span className={`absolute font-bold ${fontSize}`}>{score}</span>
+            </div>
+          );
+        };
+
+        return (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Prosody Results</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <select value={selectedStudentId} onChange={e => { setSelectedStudentId(e.target.value); setSelectedAnalysisId(''); }} className="block w-full rounded-md border-gray-300">
+                <option value="">Select a student</option>
+                {students.map(s => <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>)}
+              </select>
+              <select value={selectedAnalysisId} onChange={e => setSelectedAnalysisId(e.target.value)} className="block w-full rounded-md border-gray-300" disabled={!selectedStudentId || studentProsodyData.length === 0}>
+                <option value="">Select a result</option>
+                {studentProsodyData.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {getPassageTitle(item.passageId)} - {new Date(item.timestamp).toLocaleString()}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedAnalysis ? (
+              <div className="border-2 border-dashed rounded-lg p-6">
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h4 className="text-xl font-bold text-gray-800">{getPassageTitle(selectedAnalysis.passageId)}</h4>
+                    <p className="text-sm text-gray-500">Result from {new Date(selectedAnalysis.timestamp).toLocaleString()}</p>
+                  </div>
+                  <button onClick={handleDownloadReport} className="flex items-center gap-2 px-4 py-2 text-white bg-primary rounded-md hover:bg-blue-600">
+                    <DownloadIcon className="w-5 h-5" /> Download Report
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 items-center">
+                  <div className="md:col-span-2 flex justify-center">
+                    <ProgressRing score={selectedAnalysis.result.overallScore} size="w-32 h-32" stroke="10" fontSize="text-3xl" />
+                  </div>
+                  <div className="md:col-span-3 space-y-4">
+                    <div className="prosody-score-card flex justify-between items-center bg-blue-50 p-3 rounded-lg">
+                      <span className="font-semibold">Phrasing</span><span className="font-bold text-blue-600">{selectedAnalysis.result.scores.phrasing}/100</span>
+                    </div>
+                    <div className="prosody-score-card flex justify-between items-center bg-green-50 p-3 rounded-lg">
+                      <span className="font-semibold">Intonation</span><span className="font-bold text-green-600">{selectedAnalysis.result.scores.intonation}/100</span>
+                    </div>
+                    <div className="prosody-score-card flex justify-between items-center bg-yellow-50 p-3 rounded-lg">
+                      <span className="font-semibold">Stress</span><span className="font-bold text-yellow-600">{selectedAnalysis.result.scores.stress}/100</span>
+                    </div>
+                    <div className="prosody-score-card flex justify-between items-center bg-red-50 p-3 rounded-lg">
+                      <span className="font-semibold">Rate ({selectedAnalysis.result.wpm} WPM)</span><span className="font-bold text-red-600">{selectedAnalysis.result.scores.rate}/100</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-6 text-center bg-gray-100 p-4 rounded-lg">
+                  <p className="font-semibold">Feedback:</p>
+                  <p className="text-gray-700">{selectedAnalysis.result.feedback}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 border-2 border-dashed rounded-lg">
+                <p className="text-gray-500">
+                  {selectedStudentId ? 'Select a prosody result to view details.' : 'Select a student to view their prosody results.'}
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      // NEW: Comprehension Quiz Report Component for Results & Reports tab
+      const ComprehensionQuizReport = ({ students, teacherName }) => {
+        const [selectedStudentId, setSelectedStudentId] = useState('');
+        const [selectedResultId, setSelectedResultId] = useState('');
+        const { results, getResultsByStudent, deleteResult } = useComprehensionResults();
+
+        const studentResults = selectedStudentId ? getResultsByStudent(parseInt(selectedStudentId, 10)) : [];
+        const selectedResult = studentResults.find(r => r.id === parseInt(selectedResultId, 10));
+        const selectedStudent = students.find(s => s.id === parseInt(selectedStudentId, 10));
+
+        const handleDownloadReport = () => {
+          if (!selectedResult || !selectedStudent) return;
+
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF();
+
+          doc.setFontSize(20).setFont("helvetica", "bold").text("EchoText Comprehension Quiz Report", 105, 22, { align: 'center' });
+          doc.setFontSize(12).setFont("helvetica", "normal");
+          doc.text(`Student:`, 14, 40).setFont("helvetica", "bold").text(`${selectedStudent.firstName} ${selectedStudent.lastName}`, 34, 40);
+          doc.setFont("helvetica", "normal").text(`Grade:`, 14, 47).setFont("helvetica", "bold").text(`${selectedStudent.gradeLevel === 'Kinder' ? 'Kindergarten' : `Grade ${selectedStudent.gradeLevel}`}`, 30, 47);
+          doc.setFont("helvetica", "normal").text(`Date:`, 150, 40).setFont("helvetica", "bold").text(new Date(selectedResult.timestamp).toLocaleDateString(), 162, 40);
+          doc.setFont("helvetica", "normal").text(`Evaluated by:`, 14, 54).setFont("helvetica", "bold").text(`${teacherName || 'Teacher'}`, 42, 54);
+          doc.setLineWidth(0.5).line(14, 60, 196, 60);
+
+          const totalPoints = selectedResult.quizData.reduce((sum, q) => sum + q.points, 0);
+          let earnedPoints = 0;
+          selectedResult.quizData.forEach(q => {
+            const studentAnswer = selectedResult.answers[q.id];
+            if (studentAnswer && q.correctAnswer.toLowerCase() === studentAnswer.toLowerCase()) {
+              earnedPoints += q.points;
+            }
+          });
+
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Quiz Summary", 14, 75);
+          doc.autoTable({
+            startY: 80,
+            head: [['Metric', 'Value']],
+            body: [
+              ['Total Score', `${selectedResult.score}%`],
+              ['Points Earned', `${earnedPoints}/${totalPoints}`],
+              ['Number of Questions', selectedResult.quizData.length.toString()],
+              ['Date Completed', new Date(selectedResult.timestamp).toLocaleDateString()]
+            ],
+            theme: 'striped',
+            headStyles: { fillColor: [44, 62, 80] }
+          });
+
+          const detailedResults = selectedResult.quizData.map((q, index) => {
+            const studentAnswer = selectedResult.answers[q.id] || 'No answer';
+            const isCorrect = q.correctAnswer.toLowerCase() === studentAnswer.toLowerCase();
+            return [
+              index + 1,
+              q.question,
+              studentAnswer,
+              q.correctAnswer,
+              isCorrect ? 'Correct' : 'Incorrect',
+              `${isCorrect ? q.points : 0}/${q.points}`
+            ];
+          });
+
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Detailed Question Results", 14, doc.lastAutoTable.finalY + 15);
+          doc.autoTable({
+            startY: doc.lastAutoTable.finalY + 25,
+            head: [['#', 'Question', 'Student Answer', 'Correct Answer', 'Result', 'Points']],
+            body: detailedResults,
+            theme: 'grid',
+            headStyles: { fillColor: [44, 62, 80] },
+            styles: { fontSize: 8 },
+            columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 45 }, 2: { cellWidth: 30 }, 3: { cellWidth: 30 }, 4: { cellWidth: 20 }, 5: { cellWidth: 20 } }
+          });
+
+          doc.save(`Comprehension_Report_${selectedStudent.firstName}_${selectedStudent.lastName}_${new Date(selectedResult.timestamp).toISOString().split('T')[0]}.pdf`);
+        };
+
+        return (
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Comprehension Quiz Reports</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <select value={selectedStudentId} onChange={e => { setSelectedStudentId(e.target.value); setSelectedResultId(''); }} className="block w-full rounded-md border-gray-300">
+                <option value="">Select a student</option>
+                {students.map(s => <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>)}
+              </select>
+              <select value={selectedResultId} onChange={e => setSelectedResultId(e.target.value)} className="block w-full rounded-md border-gray-300" disabled={!selectedStudentId || studentResults.length === 0}>
+                <option value="">Select a quiz result</option>
+                {studentResults.map(r => (
+                  <option key={r.id} value={r.id}>
+                    Quiz from {new Date(r.timestamp).toLocaleString()} - {r.score}%
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedResult ? (
+              <div className="border rounded-lg p-6 bg-gray-50">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h4 className="text-xl font-bold text-gray-800">Quiz Result Details</h4>
+                    <p className="text-sm text-gray-500">Completed on: {new Date(selectedResult.timestamp).toLocaleString()}</p>
+                  </div>
+                  <button onClick={handleDownloadReport} className="flex items-center gap-2 px-4 py-2 text-white bg-primary rounded-md hover:bg-blue-600">
+                    <DownloadIcon className="w-5 h-5" /> Download Report
+                  </button>
+                </div>
+                <div className="mb-4 text-center p-4 bg-blue-100 rounded-lg">
+                  <p className="text-lg font-medium text-blue-800">Overall Score</p>
+                  <p className="text-4xl font-bold text-primary">{selectedResult.score}%</p>
+                </div>
+                <div className="space-y-4 max-h-96 overflow-y-auto">
+                  {selectedResult.quizData.map((q, index) => {
+                    const studentAnswer = selectedResult.answers[q.id] || 'No answer';
+                    const isCorrect = q.correctAnswer.toLowerCase() === studentAnswer.toLowerCase();
+                    return (
+                      <div key={q.id} className={`p-4 rounded-lg border-l-4 ${isCorrect ? 'border-success bg-green-50' : 'border-danger bg-red-50'}`}>
+                        <p className="font-semibold">{index + 1}. {q.question}</p>
+                        <p className="text-sm mt-2">Student's Answer: <span className="font-medium">{studentAnswer}</span></p>
+                        {!isCorrect && <p className="text-sm">Correct Answer: <span className="font-medium">{q.correctAnswer}</span></p>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-12 border-2 border-dashed rounded-lg">
+                <p className="text-gray-500">
+                  {selectedStudentId ? 'Select a quiz result to view details.' : 'Select a student to view their quiz history.'}
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      };
+
       // UPDATED: Results component with Progress Report Settings, Miscue Analysis Report, and Class Summary
       const Results = ({ students, assessments, teacherName }) => {
-        const [selectedStudentId, setSelectedStudentId] = useState('');
-        const [activeTab, setActiveTab] = useState('progress'); // 'progress' or 'miscue'
+        const [selectedStudentId, setSelectedStudentId] = useState(''); // Used by Progress Report
+        const [activeTab, setActiveTab] = useState('progress'); // 'progress', 'miscue', 'prosody', 'comprehension'
         const [settings, updateSettings] = useProgressReportSettings();
         const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
         const [isClassSummaryModalOpen, setIsClassSummaryModalOpen] = useState(false); // NEW: Class Summary Modal state
@@ -6020,106 +6933,78 @@
                       >
                         Miscue Analysis
                       </button>
+                      <button
+                        className={`flex-1 px-4 py-3 text-center font-medium ${activeTab === 'prosody' ? 'text-primary border-b-2 border-primary' : 'text-gray-500 hover:text-gray-700'}`}
+                        onClick={() => setActiveTab('prosody')}
+                      >
+                        Prosody Results
+                      </button>
+                      <button
+                        className={`flex-1 px-4 py-3 text-center font-medium ${
+                          activeTab === 'comprehension'
+                            ? 'text-primary border-b-2 border-primary'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                        onClick={() => setActiveTab('comprehension')}
+                      >
+                        Comprehension Quiz
+                      </button>
                     </div>
                   </div>
                   
                   <div className="p-6">
-                    {activeTab === 'progress' ? (
+                    {activeTab === 'progress' && (
                       <div>
-                        <div className="flex justify-between items-center mb-6">
-                          <div className="grid grid-cols-3 gap-6">
-                            <div className="col-span-2">
-                              <label className="block text-sm font-medium text-gray-700">Select Student</label>
-                              <select 
-                                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
-                                  value={selectedStudentId}
-                                  onChange={e => setSelectedStudentId(e.target.value)}
-                              >
-                                  <option value="">Select a student</option>
-                                  {students.map(s => <option key={s.id} value={s.id.toString()}>{s.firstName} {s.lastName}</option>)}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700">PHIL IRI Level</label>
-                              <div className="mt-1">
-                                  <span className={`px-4 py-2 text-sm font-bold text-white rounded-full ${reportData?.finalLevel.badgeClass || 'bg-gray-400'}`}>
-                                      {reportData?.finalLevel.level || 'Not Assessed'}
-                                  </span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex gap-2 ml-4">
-                            <button 
-                              onClick={() => setIsSettingsModalOpen(true)}
-                              className="px-4 py-2 text-sm text-white bg-warning rounded-md hover:bg-yellow-600"
-                            >
-                              Settings
-                            </button>
-                            <button 
-                              onClick={handleDownloadProgressReport}
-                              disabled={!reportData}
-                              className="px-4 py-2 text-sm text-white bg-primary rounded-md hover:bg-blue-600 disabled:opacity-50"
-                            >
-                              Download PDF
-                            </button>
-                            {/* NEW: Download Class Summary Button */}
-                            <button 
-                              onClick={() => setIsClassSummaryModalOpen(true)}
-                              className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-success rounded-md hover:bg-green-600"
-                            >
-                              <DownloadIcon className="w-4 h-4" />
-                              Class Summary
-                            </button>
+                        <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+                          <select 
+                            value={selectedStudentId} 
+                            onChange={e => setSelectedStudentId(e.target.value)}
+                            className="block w-full md:w-auto rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
+                          >
+                            <option value="">Select a student</option>
+                            {students.map(s => <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>)}
+                          </select>
+                          <div className="flex gap-2">
+                            <button onClick={() => setIsSettingsModalOpen(true)} className="px-4 py-2 text-sm text-white bg-secondary rounded-md hover:bg-gray-600">Report Settings</button>
+                            <button onClick={() => setIsClassSummaryModalOpen(true)} className="px-4 py-2 text-sm text-white bg-primary rounded-md hover:bg-blue-600">Class Summary</button>
                           </div>
                         </div>
                         {reportData ? (
-                            <div className="border-2 border-primary rounded-lg p-6">
-                                <div className="text-center mb-6">
-                                    <h4 className="text-xl font-bold text-primary">EchoText: Where TEXT is ECHOED as Voice</h4>
-                                    <h5 className="text-lg font-semibold text-gray-700">Progress Report</h5>
-                                </div>
-                                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm mb-6">
-                                    <p><strong>Student Name:</strong> {reportData.student.firstName} {reportData.student.lastName}</p>
-                                    <p><strong>Date of Report:</strong> {new Date().toLocaleDateString()}</p>
-                                    <p><strong>Grade Level:</strong> {reportData.student.gradeLevel === 'Kinder' ? 'Kindergarten' : `Grade ${reportData.student.gradeLevel}`}</p>
-                                    <p><strong>Report Period:</strong> ${settings.totalWeeks} ${settings.reportPeriod}</p>
-                                    <p><strong>Evaluated by:</strong> {teacherName || 'Teacher'}</p>
-                                    <p><strong>PHIL-IRI Level:</strong> {reportData.finalLevel.level}</p>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="min-w-full border">
-                                        <thead className="bg-primary text-white"><tr>
-                                            <th className="font-semibold p-3 text-left border">Assessment Area</th>
-                                            {Array.from({ length: reportData.totalPeriods }, (_, i) => (
-                                              <th key={i} className="font-semibold p-3 text-center border">
-                                                {settings.reportPeriod === 'weeks' ? 'Week' : 'Day'} {i + 1}
-                                              </th>
-                                            ))}
-                                            <th className="font-semibold p-3 text-center border">Progress</th>
-                                        </tr></thead>
-                                        <tbody className="divide-y">
-                                            {reportData.tableRows.map(row => (
-                                                <tr key={row.name} className="odd:bg-white even:bg-gray-50">
-                                                    <td className="p-3 font-medium border">{row.name}</td>
-                                                    {row.periodValues.map((value, index) => (
-                                                      <td key={index} className="p-3 text-center border">{value}</td>
-                                                    ))}
-                                                    <td className="p-3 text-center border">{row.progress}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                          <div className="border rounded-lg p-6 bg-gray-50">
+                            <div className="flex justify-between items-start mb-4">
+                              <div>
+                                <h3 className="text-xl font-bold text-gray-800">{reportData.student.firstName} {reportData.student.lastName}</h3>
+                                <p className="text-sm text-gray-500">Final PHIL-IRI Level: <span className={`px-2 py-1 text-xs font-semibold text-white rounded-full ${reportData.finalLevel.badgeClass}`}>{reportData.finalLevel.level}</span></p>
+                              </div>
+                              <button onClick={handleDownloadProgressReport} className="flex items-center gap-2 px-4 py-2 text-white bg-primary rounded-md hover:bg-blue-600">
+                                <DownloadIcon className="w-5 h-5" /> Download Report
+                              </button>
                             </div>
-                        ) : (
-                            <div className="text-center text-gray-500 py-16 border-2 border-dashed rounded-lg">
-                                <p>Select a student to generate their report.</p>
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full divide-y divide-gray-200 border">
+                                <thead className="bg-gray-100"><tr>
+                                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase border">Assessment Area</th>
+                                  {Array.from({ length: reportData.totalPeriods }, (_, i) => <th key={i} className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase border">{settings.reportPeriod === 'weeks' ? 'W' : 'D'}{i + 1}</th>)}
+                                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase border">Progress</th>
+                                </tr></thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                  {reportData.tableRows.map(row => (
+                                    <tr key={row.name}>
+                                      <td className="px-4 py-2 font-medium border">{row.name}</td>
+                                      {row.periodValues.map((val, i) => <td key={i} className="px-4 py-2 text-center border">{val}</td>)}
+                                      <td className="px-4 py-2 text-center font-medium border">{row.progress}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
-                        )}
+                          </div>
+                        ) : <div className="text-center py-12 border-2 border-dashed rounded-lg"><p className="text-gray-500">Select a student to view their progress report.</p></div>}
                       </div>
-                    ) : (
-                      <MiscueAnalysisReport students={students} passages={{}} teacherName={teacherName} />
                     )}
+                    {activeTab === 'miscue' && <MiscueAnalysisReport students={students} passages={{}} teacherName={teacherName} />}
+                    {activeTab === 'prosody' && <ProsodyReport students={students} passages={{}} teacherName={teacherName} />}
+                    {activeTab === 'comprehension' && <ComprehensionQuizReport students={students} teacherName={teacherName} />}
                   </div>
                 </div>
                 
@@ -6215,6 +7100,7 @@
           const [activeModule, setActiveModule] = useState(Module.Dashboard);
           const [students, setStudents] = useLocalStorage('echoText-students', sampleStudents);
           const [attendance, setAttendance] = useLocalStorage('echoText-attendance', sampleAttendance);
+          
           const [assessments, setAssessments] = useLocalStorage('echoText-assessments', sampleAssessments);
           const [passages, setPassages] = useLocalStorage('echoText-passages', samplePassages);
           const [teacherName, setTeacherName] = useTeacherName();
@@ -6279,6 +7165,10 @@
                       return <Results students={students} assessments={assessments} teacherName={teacherName} />;
                   case Module.Guidelines:
                       return <Guidelines />;
+                  case Module.Vocabulary: // NEW: Added Vocabulary module
+                      return <VocabularyPractice />;
+                  case Module.Prosody: // NEW: Added Prosody module
+                      return <ProsodyPractice students={students} passages={passages} />;
                   case Module.ReadingDrill: // NEW: Added Reading Drill module
                       return <ReadingDrill />;
                   default:
@@ -6359,6 +7249,10 @@
         <StrictMode>
           <App />
         </StrictMode>
+      );
+    </script>
+</body>
+</html> </StrictMode>
       );
     </script>
 </body>

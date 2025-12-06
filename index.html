@@ -1161,8 +1161,9 @@
       // NEW: Login Component
       const LoginPage = ({ onLogin, onCreateAccount }) => {
         const [isLogin, setIsLogin] = useState(true);
+        const [rememberedUsername, setRememberedUsername] = useLocalStorage('echoText-rememberedUsername', '');
         const [formData, setFormData] = useState({
-          username: '',
+          username: rememberedUsername || '',
           password: '',
           confirmPassword: '',
           secretCode: ''
@@ -1183,6 +1184,8 @@
               const success = onLogin(formData.username, formData.password);
               if (!success) {
                 setError('Invalid username or password');
+              } else {
+                setRememberedUsername(formData.username);
               }
             } else {
               if (formData.password !== formData.confirmPassword) {
@@ -1193,6 +1196,8 @@
               const result = onCreateAccount(formData.username, formData.password, formData.secretCode);
               if (!result.success) {
                 setError(result.message);
+              } else {
+                setRememberedUsername(formData.username);
               }
             }
           } catch (err) {
@@ -3939,7 +3944,7 @@
             if (wordRecognition === undefined || comprehension === undefined) return { level: 'Not Assessed', class: 'bg-gray-400 text-white' };
             if (wordRecognition >= 97 && comprehension >= 80) return { level: 'Independent', class: 'bg-success text-white' };
             if (wordRecognition >= 90 && comprehension >= 59) return { level: 'Instructional', class: 'bg-primary text-white' };
-            if (wordRecognition < 75 || comprehension < 50) return { level: 'Non-Reader', class: 'bg-danger text-white' };
+            if (wordRecognition < 1 || comprehension < 1) return { level: 'Non-Reader', class: 'bg-danger text-white' };
             if (wordRecognition < 90 || comprehension < 59) return { level: 'Frustration', class: 'bg-warning text-white' };
             return { level: 'Not Assessed', class: 'bg-gray-400 text-white' };
         };
@@ -5176,7 +5181,9 @@
                       setStudentReading(prev => {
                           // Only add final results to avoid duplication
                           if (finalTranscript) {
-                              return prev + finalTranscript;
+                              const newText = prev + finalTranscript;
+                              // Add a space after a period if it's followed by a letter.
+                              return newText.replace(/\.(?=[a-zA-Z])/g, '. ');
                           }
                           return prev;
                       });
@@ -5315,7 +5322,7 @@
                 if (wr === undefined || comp === undefined) return { level: 'Not Assessed', badge: 'N/A' };
                 if (wr >= 97 && comp >= 80) return { level: 'Independent', badge: 'Independent' };
                 if (wr >= 90 && comp >= 59) return { level: 'Instructional', badge: 'Instructional' };
-                if (wr < 75 || comp < 50) return { level: 'Non-Reader', badge: 'Non-Reader' };
+                if (wr < 1 || comp < 1) return { level: 'Non-Reader', badge: 'Non-Reader' };
                 if (wr < 90 || comp < 59) return { level: 'Frustration', badge: 'Frustration' };
                 return { level: 'Not Assessed', badge: 'N/A' };
               };
@@ -6159,7 +6166,7 @@
             if (wr === undefined || comp === undefined) return { level: 'Not Assessed', badge: 'N/A' };
             if (wr >= 97 && comp >= 80) return { level: 'Independent', badge: 'Independent' };
             if (wr >= 90 && comp >= 59) return { level: 'Instructional', badge: 'Instructional' };
-            if (wr < 75 || comp < 50) return { level: 'Non-Reader', badge: 'Non-Reader' };
+            if (wr < 1 || comp < 1) return { level: 'Non-Reader', badge: 'Non-Reader' };
             if (wr < 90 || comp < 59) return { level: 'Frustration', badge: 'Frustration' };
             return { level: 'Not Assessed', badge: 'N/A' };
           };
@@ -6384,7 +6391,7 @@
           if (wordRecognition === undefined || comprehension === undefined) return { level: 'Not Assessed', badge: 'N/A' };
           if (wordRecognition >= 97 && comprehension >= 80) return { level: 'Independent', badge: 'Independent' };
           if (wordRecognition >= 90 && comprehension >= 59) return { level: 'Instructional', badge: 'Instructional' };
-          if (wordRecognition < 75 || comprehension < 50) return { level: 'Non-Reader', badge: 'Non-Reader' };
+          if (wordRecognition < 1 || comprehension < 1) return { level: 'Non-Reader', badge: 'Non-Reader' };
           if (wordRecognition < 90 || comprehension < 59) return { level: 'Frustration', badge: 'Frustration' };
           return { level: 'Not Assessed', badge: 'N/A' };
         };
@@ -6815,7 +6822,7 @@
             }
             if (wordRecognition >= 97 && comprehension >= 80) return { level: 'Independent', badgeClass: 'bg-success' };
             if (wordRecognition >= 90 && comprehension >= 59) return { level: 'Instructional', badgeClass: 'bg-primary' };
-            if (wordRecognition < 75 || comprehension < 50) return { level: 'Non-Reader', badgeClass: 'bg-danger' };
+            if (wordRecognition < 1 || comprehension < 1) return { level: 'Non-Reader', badgeClass: 'bg-danger' };
             if (wordRecognition < 90 || comprehension < 59) return { level: 'Frustration', badgeClass: 'bg-warning' };
             return { level: 'Not Assessed', badgeClass: 'bg-gray-400' };
         };
@@ -7068,14 +7075,14 @@
                                       </tr>
                                       <tr>
                                           <td className="px-4 py-4"><GuidelineBadge label="Frustration" color="bg-warning" /></td>
-                                          <td className="px-4 py-4 text-sm">Below 90%</td>
-                                          <td className="px-4 py-4 text-sm">Below 59%</td>
+                                          <td className="px-4 py-4 text-sm">89% and below</td>
+                                          <td className="px-4 py-4 text-sm">58% and below</td>
                                           <td className="px-4 py-4 text-sm">Student struggles with reading and has poor comprehension even with support.</td>
                                       </tr>
                                       <tr>
                                           <td className="px-4 py-4"><GuidelineBadge label="Non-Reader" color="bg-danger" /></td>
-                                          <td className="px-4 py-4 text-sm">Below 75%</td>
-                                          <td className="px-4 py-4 text-sm">Below 50%</td>
+                                          <td className="px-4 py-4 text-sm">0</td>
+                                          <td className="px-4 py-4 text-sm">0</td>
                                           <td className="px-4 py-4 text-sm">Student cannot recognize most words and has very limited comprehension.</td>
                                       </tr>
                                   </tbody>

@@ -1712,26 +1712,48 @@
                 const s_idx = op.s_idx;
 
                 // Check for Repetition: an insertion where the inserted word
-                // is the same as the previously matched passage word.
-                if (op.op === 'ins' && k > 0) {
-                  // Find the most recent previous operation that involved a student word.
-                  const prevStudentOp = alignmentOps.slice(0, k).reverse().find(o => o.s_idx !== -1);
-                  if (prevStudentOp) {
-                    const insertedWord = normalizeWord(studentWords[op.s_idx]);
-                    const prevStudentWord = normalizeWord(studentWords[prevStudentOp.s_idx]);
-                    // A repetition occurs if the inserted word is the same as the last read word, and it's the very next word.
-                    if (insertedWord === prevStudentWord && op.s_idx === prevStudentOp.s_idx + 1) {
-                      miscues.push({
-                        type: 'Repetition',
-                        originalWord: '[repetition]',
-                        studentWord: studentWords[s_idx],
-                        context: getContext(passageWords, prevStudentOp.p_idx), // Context is the word that was repeated.
-                        explanation: `Student repeated the word "${studentWords[s_idx]}"`,
-                      });
-                      continue; // Skip default insertion handling
-                    }
-                  }
-                }
+// is the same as the word that SHOULD have been read next
+if (op.op === 'ins' && k > 0) {
+  // Look ahead to find what the next passage word should be
+  let nextPassageOp = null;
+  for (let nextK = k + 1; nextK < alignmentOps.length; nextK++) {
+    const nextOp = alignmentOps[nextK];
+    if (nextOp.op === 'match' || nextOp.op === 'sub' || nextOp.op === 'del') {
+      nextPassageOp = nextOp;
+      break;
+    }
+  }
+  
+  if (nextPassageOp && nextPassageOp.p_idx !== -1) {
+    const insertedWord = normalizeWord(studentWords[op.s_idx]);
+    const nextPassageWord = normalizeWord(passageWords[nextPassageOp.p_idx]);
+    
+    // Check if inserted word repeats the next expected passage word
+    if (insertedWord === nextPassageWord) {
+      // Also check if this is NOT a simple insertion by seeing if the word appears again later
+      let isActualRepetition = false;
+      for (let checkK = k + 1; checkK < alignmentOps.length; checkK++) {
+        const checkOp = alignmentOps[checkK];
+        if ((checkOp.op === 'match' || checkOp.op === 'sub') && 
+            normalizeWord(studentWords[checkOp.s_idx]) === insertedWord) {
+          isActualRepetition = true;
+          break;
+        }
+      }
+      
+      if (isActualRepetition) {
+        miscues.push({
+          type: 'Repetition',
+          originalWord: passageWords[nextPassageOp.p_idx],
+          studentWord: studentWords[op.s_idx],
+          context: getContext(passageWords, nextPassageOp.p_idx),
+          explanation: `Student repeated the word "${studentWords[op.s_idx]}"`
+        });
+        continue; // Skip default insertion handling
+      }
+    }
+  }
+}
 
                 // Handle standard miscues
                 switch (op.op) {

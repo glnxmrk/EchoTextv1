@@ -4101,41 +4101,90 @@
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* Replaced Recent Assessments with Reading Profile Summary Graph */}
-                <div className="bg-white rounded-lg shadow-md lg:col-span-2">
-                    <div className="px-6 py-4 border-b bg-gradient-to-br from-primary to-secondary text-white rounded-t-lg">
-                        <h5 className="text-lg font-semibold">Reading Profile Summary</h5>
-                    </div>
-                    <div className="p-6">
-                        <div className="relative h-64 flex items-end justify-between space-x-4 px-4 pb-2 border-b border-gray-200">
-                             {readingProfileDistribution.map((item, index) => {
-                                const maxCount = Math.max(...readingProfileDistribution.map(d => d.count), students.length > 0 ? students.length : 10);
-                                const barHeight = maxCount > 0 ? (item.count / maxCount) * 100 : 0;
-                                
-                                return (
-                                    <div key={index} className="flex flex-col items-center justify-end w-full group relative">
-                                        <div className="mb-1 font-bold text-gray-700 opacity-100 transition-opacity duration-200">
-                                            {item.count}
-                                        </div>
-                                        <div 
-                                            className={`w-full max-w-[50px] rounded-t-md transition-all duration-700 ease-out hover:brightness-110 ${item.color}`}
-                                            style={{ height: `${barHeight}%`, minHeight: item.count > 0 ? '4px' : '0' }}
-                                        >
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                {/* Enhanced Vertical Bar Chart for Reading Profile Summary */}
+<div className="bg-white rounded-lg shadow-md lg:col-span-2">
+    <div className="px-6 py-4 border-b bg-gradient-to-br from-primary to-secondary text-white rounded-t-lg">
+        <h5 className="text-lg font-semibold">Reading Profile Summary</h5>
+    </div>
+    <div className="p-6">
+        {/* Bar Chart Container - Zero at bottom */}
+        <div className="flex items-end h-64 px-4 pb-2 space-x-2 md:space-x-4">
+            {readingProfileDistribution.map((item, index) => {
+                // Calculate max value for scaling
+                const maxValue = Math.max(...readingProfileDistribution.map(d => d.count), 1);
+                
+                // Calculate height with minimum 5% for visibility
+                const calculatedHeight = (item.count / maxValue) * 100;
+                const barHeight = Math.max(5, calculatedHeight); // Minimum 5% height
+                
+                // Use gradient colors for bars
+                const gradientColors = {
+                    'Independent': 'from-green-400 to-green-600',
+                    'Instructional': 'from-blue-400 to-blue-600',
+                    'Frustration': 'from-yellow-400 to-yellow-600',
+                    'Non-Reader': 'from-red-400 to-red-600',
+                    'Not Assessed': 'from-gray-400 to-gray-600'
+                };
+                
+                const gradientClass = gradientColors[item.label] || 'from-gray-400 to-gray-600';
+                
+                return (
+                    <div 
+                        key={index} 
+                        className="flex flex-col items-center justify-end flex-1 h-full group relative"
+                        style={{ height: '100%' }}
+                    >
+                        {/* Bar with gradient and animation - GROWS UP FROM BOTTOM */}
+                        <div 
+                            className={`w-3/4 max-w-[60px] rounded-t-lg bg-gradient-to-t ${gradientClass} transition-all duration-700 ease-out hover:brightness-110 hover:scale-105 relative`}
+                            style={{ 
+                                height: `${barHeight}%`,
+                                minHeight: '20px' // Absolute minimum height
+                            }}
+                            title={`${item.label}: ${item.count} students`}
+                        >
+                            {/* Tooltip on hover */}
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap pointer-events-none z-10">
+                                <div className="font-semibold">{item.label}</div>
+                                <div>{item.count} students</div>
+                                <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                            </div>
+                            
+                            {/* Bar value inside bar (visible on hover) */}
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                <span className="text-white font-bold text-sm drop-shadow-lg">
+                                    {item.count}
+                                </span>
+                            </div>
+                            
+                            {/* Count value displayed on top of bar */}
+                            <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-sm font-semibold text-gray-700">
+                                {item.count}
+                            </div>
                         </div>
-                        <div className="flex justify-between space-x-4 px-4 mt-3">
-                            {readingProfileDistribution.map((item, index) => (
-                                <div key={index} className="w-full text-center flex flex-col items-center">
-                                     <span className="text-xs font-semibold text-gray-600 block mb-1 text-center leading-tight">{item.label}</span>
-                                </div>
-                            ))}
+                        
+                        {/* Category label at the very bottom */}
+                        <div className="mt-2 text-center w-full">
+                            <span className="text-xs font-semibold text-gray-600 block truncate px-1">
+                                {item.label}
+                            </span>
+                            <span className="text-xs text-gray-500 mt-1 block">
+                                {students.length > 0 ? `${Math.round((item.count / students.length) * 100)}%` : '0%'}
+                            </span>
                         </div>
                     </div>
-                </div>
-
+                );
+            })}
+        </div>
+        
+        {/* Baseline at zero - Optional visual indicator */}
+        <div className="mt-2 px-4">
+            <div className="border-t border-gray-300 pt-2 text-xs text-gray-500">
+                Reading Profile Distribution
+            </div>
+        </div>
+    </div>
+</div>
                 <div className="bg-white rounded-lg shadow-md">
                     <div className="px-6 py-4 border-b bg-gradient-to-br from-primary to-secondary text-white rounded-t-lg"><h5 className="text-lg font-semibold">Reading Progress</h5></div>
                     <div className="p-6">

@@ -3812,6 +3812,17 @@
       const audioChunksRef = useRef([]);
       const timerIntervalRef = useRef(null);
 
+      // NEW: Audio Analysis Refs
+      const audioContextRef = useRef(null);
+      const analyserRef = useRef(null);
+      const sourceRef = useRef(null);
+      const dataCollectionIntervalRef = useRef(null);
+      const recognitionRef = useRef(null);
+
+      // NEW: Audio Data State
+      const [transcript, setTranscript] = useState('');
+      const [audioData, setAudioData] = useState({ pitch: [], volume: [] });
+
       const { saveProsodyResult } = useProsodyStorage();
       const currentPassage = useMemo(() => passages[parseInt(selectedPassageId, 10)], [passages, selectedPassageId]);
 
@@ -3822,11 +3833,84 @@
         }
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+          // Audio Context Setup for Pitch/Volume
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          audioContextRef.current = new AudioContext();
+          analyserRef.current = audioContextRef.current.createAnalyser();
+          analyserRef.current.fftSize = 2048;
+          sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
+          sourceRef.current.connect(analyserRef.current);
+
+          const bufferLength = analyserRef.current.fftSize;
+          const dataArray = new Float32Array(bufferLength);
+
+          // Data Collection Loop
+          setAudioData({ pitch: [], volume: [] });
+          dataCollectionIntervalRef.current = setInterval(() => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getFloatTimeDomainData(dataArray);
+
+            // Calculate RMS (Volume/Stress)
+            let sumSquares = 0;
+            for (let i = 0; i < bufferLength; i++) {
+              sumSquares += dataArray[i] * dataArray[i];
+            }
+            const rms = Math.sqrt(sumSquares / bufferLength);
+
+            // Calculate Pitch (Autocorrelation)
+            // Simplified YIN-like approach or Zero-crossing for performance
+            let rL = 2048;
+            let corr = new Float32Array(rL);
+            for (let i = 0; i < rL; i++) {
+              for (let j = 0; j < rL - i; j++) {
+                corr[i] += dataArray[j] * dataArray[j + i];
+              }
+            }
+            let d = 0;
+            while (corr[d] > corr[d + 1]) d++;
+            let maxval = -1, maxpos = -1;
+            for (let i = d; i < rL; i++) {
+              if (corr[i] > maxval) {
+                maxval = corr[i];
+                maxpos = i;
+              }
+            }
+            let pitch = -1;
+            if (maxpos > 0) {
+              pitch = audioContextRef.current.sampleRate / maxpos;
+            }
+
+            setAudioData(prev => ({
+              pitch: [...prev.pitch, pitch],
+              volume: [...prev.volume, rms]
+            }));
+          }, 100); // Sample every 100ms
+
+          // Speech Recognition Setup
+          if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognitionRef.current = new SpeechRecognition();
+            recognitionRef.current.continuous = true;
+            recognitionRef.current.interimResults = true;
+            recognitionRef.current.lang = 'en-US';
+            recognitionRef.current.onresult = (event) => {
+              let finalTranscript = '';
+              for (let i = event.resultIndex; i < event.results.length; i++) {
+                if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
+              }
+              if (finalTranscript) setTranscript(prev => prev + ' ' + finalTranscript);
+            };
+            recognitionRef.current.start();
+          }
+
+          // Media Recorder Setup
           mediaRecorderRef.current = new MediaRecorder(stream);
           audioChunksRef.current = [];
           setAudioURL(null);
           setAnalysisResult(null);
           setIsSaved(false);
+          setTranscript(''); // Reset transcript
 
           mediaRecorderRef.current.ondataavailable = (event) => {
             audioChunksRef.current.push(event.data);
@@ -3837,6 +3921,9 @@
             const url = URL.createObjectURL(audioBlob);
             setAudioURL(url);
             stream.getTracks().forEach(track => track.stop());
+            if (audioContextRef.current) audioContextRef.current.close();
+            if (recognitionRef.current) recognitionRef.current.stop();
+            clearInterval(dataCollectionIntervalRef.current);
           };
 
           mediaRecorderRef.current.start();
@@ -3863,40 +3950,104 @@
         isRecording ? stopRecording() : startRecording();
       };
 
-      const simulateProsodyAnalysis = () => {
+      const analyzeProsodyReal = () => {
         setIsLoading(true);
+
         setTimeout(() => {
-          const wordCount = currentPassage.wordCount || 0;
+          // --- 1. Pitch Variation Analysis ---
+          // Filter out unrealistic pitch values (e.g., < 50Hz or > 500Hz which might be noise)
+          const validPitches = audioData.pitch.filter(p => p > 50 && p < 500);
+          let pitchScore = 0;
+          let pitchRange = 0;
+          if (validPitches.length > 5) {
+            const minPitch = Math.min(...validPitches);
+            const maxPitch = Math.max(...validPitches);
+            pitchRange = maxPitch - minPitch;
+
+            // Scoring Rule: 50-120 Hz = full score
+            if (pitchRange >= 50) pitchScore = 25;
+            else if (pitchRange >= 20) pitchScore = 15; // Partial
+            else pitchScore = 5; // Low
+          }
+
+          // --- 2. Speech Rate Analysis ---
+          // Prefer transcript word count, fallback to passage word count estimation
+          const wordCount = transcript.trim().length > 0 ? transcript.trim().split(/\s+/).length : (currentPassage.wordCount || 0);
           const wpm = recordingTime > 0 ? Math.round((wordCount / recordingTime) * 60) : 0;
 
-          // Simulate scores
-          const rateScore = Math.min(100, Math.max(0, 100 - Math.abs(wpm - 100) * 2)); // Ideal WPM around 100
-          const phrasingScore = Math.floor(Math.random() * 31) + 65; // 65-95
-          const intonationScore = Math.floor(Math.random() * 36) + 60; // 60-95
-          const stressScore = Math.floor(Math.random() * 31) + 68; // 68-98
+          let rateScore = 0;
+          // Ideal range: 100-150 WPM
+          if (wpm >= 90 && wpm <= 160) rateScore = 25;
+          else if (wpm >= 70 && wpm < 90) rateScore = 15;
+          else if (wpm > 160 && wpm <= 180) rateScore = 15;
+          else rateScore = 5;
 
-          const overallScore = Math.round((rateScore + phrasingScore + intonationScore + stressScore) / 4);
+          // --- 3. Pausing & Phrasing Analysis ---
+          // Detect silence gaps (> 0.4s) based on low volume
+          const SILENCE_THRESHOLD = 0.02; // RMS threshold
+          let silenceBlocks = 0;
+          let isSilent = false;
+          let currentSilenceDuration = 0;
 
-          // Generate feedback
+          audioData.volume.forEach(vol => {
+            if (vol < SILENCE_THRESHOLD) {
+              if (!isSilent) isSilent = true;
+              currentSilenceDuration += 0.1; // 100ms blocks
+            } else {
+              if (isSilent && currentSilenceDuration > 0.4) {
+                silenceBlocks++;
+              }
+              isSilent = false;
+              currentSilenceDuration = 0;
+            }
+          });
+
+          // Heuristic usage of punctuation count (approximate ideal pauses)
+          const punctuationCount = (currentPassage.content.match(/[.,!?]/g) || []).length;
+          let phrasingScore = 0;
+          // Ideally, pauses should roughly match sentence structure
+          const pauseRatio = silenceBlocks / (punctuationCount || 1);
+          if (pauseRatio >= 0.8 && pauseRatio <= 1.5) phrasingScore = 25;
+          else if (pauseRatio >= 0.5 && pauseRatio < 0.8) phrasingScore = 15;
+          else phrasingScore = 10;
+
+          // --- 4. Stress & Emphasis Analysis ---
+          // Variance of volume (energy)
+          const meanVol = audioData.volume.reduce((a, b) => a + b, 0) / (audioData.volume.length || 1);
+          const variance = audioData.volume.reduce((a, b) => a + Math.pow(b - meanVol, 2), 0) / (audioData.volume.length || 1);
+          const stdDev = Math.sqrt(variance);
+
+          let stressScore = 0;
+          // Higher variance typically means more dynamic range/emphasis
+          if (stdDev > 0.05) stressScore = 25;
+          else if (stdDev > 0.02) stressScore = 15;
+          else stressScore = 5;
+
+          const overallScore = pitchScore + rateScore + phrasingScore + stressScore;
+
+          // Feedback Generation
           let feedback = [];
-          if (rateScore < 75) feedback.push(wpm > 120 ? "Pacing is a bit too fast." : "Try to read a little faster.");
+          if (rateScore < 20) feedback.push(wpm > 150 ? "Slow down a bit to be clearer." : "Try to read with a steadier, slightly faster pace.");
           else feedback.push("Good pacing.");
-          if (phrasingScore < 80) feedback.push("Pay attention to natural pauses at commas and periods.");
-          else feedback.push("Excellent phrasing.");
-          if (intonationScore < 75) feedback.push("Vary your pitch more to add expression.");
-          else feedback.push("Good intonation.");
+
+          if (pitchScore < 15) feedback.push("Try to vary your pitch more to sound more expressive.");
+          else feedback.push("Excellent pitch variation.");
+
+          if (stressScore < 15) feedback.push("Use more volume changes to emphasize important words.");
 
           const result = {
             scores: {
               phrasing: phrasingScore,
-              intonation: intonationScore,
+              intonation: pitchScore,  // Mapping Pitch to Intonation label
               stress: stressScore,
               rate: rateScore,
             },
             wpm,
             overallScore,
             feedback: feedback.join(' '),
+            debug: { pitchRange: Math.round(pitchRange), volStdDev: stdDev.toFixed(4) } // For transparency
           };
+
           setAnalysisResult(result);
 
           // Automatically save the result
@@ -3906,7 +4057,7 @@
           }
 
           setIsLoading(false);
-        }, 2000);
+        }, 1000);
       };
 
       const ProgressRing = ({ score }) => {
@@ -3962,8 +4113,8 @@
               <div className="p-4 border rounded-lg bg-gray-50 space-y-4">
                 <h3 className="text-lg font-semibold">Recording & Analysis</h3>
                 <audio src={audioURL} controls className="w-full" />
-                <button onClick={simulateProsodyAnalysis} disabled={isLoading} className="px-4 py-2 bg-secondary text-white font-bold rounded-lg shadow-md hover:bg-gray-700 disabled:opacity-50">
-                  {isLoading ? 'Analyzing...' : 'Analyze Prosody'}
+                <button onClick={analyzeProsodyReal} disabled={isLoading} className="px-4 py-2 bg-secondary text-white font-bold rounded-lg shadow-md hover:bg-gray-700 disabled:opacity-50">
+                  {isLoading ? 'Analyzing Audio...' : 'Analyze Prosody'}
                 </button>
               </div>
             )}
@@ -5377,7 +5528,9 @@
       const [studentAnswers, setStudentAnswers] = useState({});
       const [hoveredWord, setHoveredWord] = useState(null);
       const [settings, updateSettings] = useAssessmentSettings();
+
       const [currentAnalysisId, setCurrentAnalysisId] = useState(null); // FIXED: Track current analysis ID
+      const [fontSize, setFontSize] = useState(18); // NEW: Font size state
 
       const {
         voices,
@@ -5852,7 +6005,7 @@
 
             <div className="bg-gray-50 border-l-4 border-primary p-4 rounded-r-md">
               <h4 className="text-xl font-bold text-gray-800 mb-2">{currentPassage.title}</h4>
-              <p className="text-gray-700 leading-relaxed text-lg">
+              <p className="text-gray-700 leading-relaxed" style={{ fontSize: `${fontSize}px`, lineHeight: '1.6' }}>
                 {passageWords.map((word, index) => {
                   const cleanWord = word.replace(/[.,!?"]/g, '');
                   const isDifficult = isDifficultWord(cleanWord);
@@ -5879,33 +6032,54 @@
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-4 p-4 border rounded-lg">
-              <div className="flex-1 min-w-[300px] flex items-center gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-4 p-4 border rounded-lg">
+              <div className="flex-1 min-w-[300px] flex flex-col gap-4">
                 {isTtsSupported ? (
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => isSpeaking ? cancel() : speak(passageText)} className={`px-3 py-2 text-sm text-white rounded-md ${isSpeaking ? 'bg-red-500' : 'bg-blue-500'}`}>
-                      {isSpeaking ? 'Stop Speaking' : 'Listen to Passage'}
-                    </button>
-                    <select value={selectedVoice?.name || ''} onChange={(e) => setSelectedVoice(voices.find(v => v.name === e.target.value) || null)} className="block w-48 rounded-md border-gray-300 text-sm" disabled={isSpeaking}>
-                      {voices.map(voice => <option key={voice.name} value={voice.name}>{voice.name} ({voice.lang})</option>)}
-                    </select>
+                  <div className="space-y-3">
+                    {/* Voice Selection Row */}
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => isSpeaking ? cancel() : speak(passageText)} className={`px-3 py-2 text-sm text-white rounded-md ${isSpeaking ? 'bg-red-500' : 'bg-blue-500'}`}>
+                        {isSpeaking ? 'Stop Speaking' : 'Listen to Passage'}
+                      </button>
+                      <select value={selectedVoice?.name || ''} onChange={(e) => setSelectedVoice(voices.find(v => v.name === e.target.value) || null)} className="block w-64 rounded-md border-gray-300 text-sm" disabled={isSpeaking}>
+                        {voices.map(voice => <option key={voice.name} value={voice.name}>{voice.name} ({voice.lang})</option>)}
+                      </select>
+                    </div>
+
+                    {/* Speed Control Row */}
+                    <div className="flex items-center gap-2">
+                      <label htmlFor="tts-speed" className="text-sm font-medium text-gray-700 w-20">Speed:</label>
+                      <input
+                        id="tts-speed"
+                        type="range"
+                        min="0.5"
+                        max="2"
+                        step="0.1"
+                        value={rate}
+                        onChange={(e) => setRate(parseFloat(e.target.value))}
+                        className="w-48 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        disabled={isSpeaking}
+                      />
+                      <span className="text-sm text-gray-600 min-w-[3rem]">{rate.toFixed(1)}x</span>
+                    </div>
+
+                    {/* Font Size Control Row */}
+                    <div className="flex items-center gap-2">
+                      <label htmlFor="font-size" className="text-sm font-medium text-gray-700 w-20">Font Size:</label>
+                      <input
+                        id="font-size"
+                        type="range"
+                        min="12"
+                        max="32"
+                        step="1"
+                        value={fontSize}
+                        onChange={(e) => setFontSize(parseInt(e.target.value))}
+                        className="w-48 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="text-sm text-gray-600 min-w-[3rem]">{fontSize}px</span>
+                    </div>
                   </div>
                 ) : <p className="text-xs text-red-500">TTS not supported.</p>}
-                <div className="flex items-center gap-2">
-                  <label htmlFor="tts-speed" className="text-sm text-gray-600">Speed:</label>
-                  <input
-                    id="tts-speed"
-                    type="range"
-                    min="0.5"
-                    max="2"
-                    step="0.1"
-                    value={rate}
-                    onChange={(e) => setRate(parseFloat(e.target.value))}
-                    className="w-24 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                    disabled={isSpeaking}
-                  />
-                  <span className="text-sm w-8 text-center text-gray-700">{rate.toFixed(1)}x</span>
-                </div>
               </div>
               <div className="flex-1 min-w-[250px] text-sm flex items-center gap-2 justify-end">
                 <button onClick={handleToggleRecording} className={`flex items-center gap-2 px-3 py-2 text-sm text-white rounded-md ${isRecording ? 'bg-danger recording-pulse' : 'bg-success'}`}>

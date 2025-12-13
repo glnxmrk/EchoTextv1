@@ -641,8 +641,8 @@
         } else {
           try {
             window.localStorage.setItem(key, JSON.stringify(newValue));
-            // Force update for local storage? 
-            // For now, simple localStorage updates don't sync across hooks via context, matching original behavior.
+            // Trigger custom event for same-tab sync
+            window.dispatchEvent(new Event('storage-update'));
           } catch (e) { console.error(e); }
         }
       };
@@ -893,15 +893,34 @@
         }
       });
 
-      // Sync with context data when in FileSystem mode
+      // Sync with context data when in FileSystem mode or LocalStorage events
       useEffect(() => {
         if (isFileSystemMode) {
           const val = data[key];
           if (val !== undefined && JSON.stringify(val) !== JSON.stringify(storedValue)) {
             setStoredValue(val);
           }
+        } else {
+          const handleStorageChange = () => {
+            try {
+              const item = window.localStorage.getItem(key);
+              if (item) {
+                const parsed = JSON.parse(item);
+                if (JSON.stringify(parsed) !== JSON.stringify(storedValue)) {
+                  setStoredValue(parsed);
+                }
+              }
+            } catch (error) { console.error(error); }
+          };
+
+          window.addEventListener('storage-update', handleStorageChange);
+          window.addEventListener('storage', handleStorageChange);
+          return () => {
+            window.removeEventListener('storage-update', handleStorageChange);
+            window.removeEventListener('storage', handleStorageChange);
+          };
         }
-      }, [data, key, isFileSystemMode]); // removed storedValue from dependency to avoid loop
+      }, [data, key, isFileSystemMode, storedValue]);
 
       const setValue = (value) => {
         try {
@@ -1473,7 +1492,7 @@
               {/* NEW: Attribution text */}
               <div className="text-xs text-blue-100 text-center mt-4  pt-4 border-t border-blue-300/30">
                 <p className="mb-0.75">This app was made possible through the efforts of</p>
-                <p className="font-semibold">ROSAVELIA O. JIMENEZ and GLENN MARK S. PRESORES</p>
+                <p className="font-semibold">Rosavelia O. Jimenez and Glenn Mark S. Presores</p>
                 <p className="text-xs mt-0.75">of San Jose Integrated School, Quezon I District, Division of Bukidnon</p>
               </div>
             </div>
@@ -1838,7 +1857,24 @@
     };
 
     // FIXED: Improved miscue analysis to properly handle insertions and repetitions
+    // FIXED: Improved miscue analysis to properly handle insertions, repetitions, mispronunciations, and transpositions
     const analyzeMiscuesWithGemini = async (passage, studentReading) => {
+      // Helper for Levenshtein distance - for Mispronunciation detection
+      const levenshtein = (s, t) => {
+        if (!s) return t.length;
+        if (!t) return s.length;
+        const arr = [];
+        for (let i = 0; i <= s.length; i++) arr[i] = [i];
+        for (let j = 1; j <= t.length; j++) arr[0][j] = j;
+        for (let i = 1; i <= s.length; i++) {
+          for (let j = 1; j <= t.length; j++) {
+            const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+            arr[i][j] = Math.min(arr[i - 1][j] + 1, arr[i][j - 1] + 1, arr[i - 1][j - 1] + cost);
+          }
+        }
+        return arr[s.length][t.length];
+      };
+
       return new Promise((resolve) => {
         setTimeout(() => {
           // Split into words, keeping original case and punctuation for display purposes.
@@ -1849,14 +1885,11 @@
           const normalizeWord = (word) =>
             word ? word.toLowerCase().replace(/[.,!?"“”:;]/g, '') : '';
 
-          const miscues = [];
+          let miscues = [];
 
           // Track positions in both arrays
           let pIndex = 0; // passage index
           let sIndex = 0; // student reading index
-
-          // Track repetitions
-          // const repetitionTracker = {}; // Repetition logic will be re-evaluated post-alignment.
 
           // --- NEW: Word-level Sequence Alignment using Dynamic Programming ---
           // This implements the Wagner-Fischer algorithm to find the Levenshtein distance
@@ -1934,12 +1967,11 @@
             }
           }
 
-          // Post-processing for reversals could be added here by inspecting the miscues array
-          // for adjacent insertion/omission pairs that are reversed. For now, this is omitted
-          // for clarity and to focus on the core substitution/insertion/omission logic.
-          // --- Step 3: Classify operations into miscues, handling repetitions ---
+          // --- Step 3: Classify operations into miscues, handling repetitions and mispronunciations ---
           // This loop iterates through the aligned operations and creates the final
           // list of pedagogical miscues.
+          const initialMiscues = [];
+
           for (let k = 0; k < alignmentOps.length; k++) {
             const op = alignmentOps[k];
             const p_idx = op.p_idx;
@@ -1976,12 +2008,14 @@
                   }
 
                   if (isActualRepetition) {
-                    miscues.push({
+                    initialMiscues.push({
                       type: 'Repetition',
                       originalWord: passageWords[nextPassageOp.p_idx],
                       studentWord: studentWords[op.s_idx],
                       context: getContext(passageWords, nextPassageOp.p_idx),
-                      explanation: `Student repeated the word "${studentWords[op.s_idx]}"`
+                      explanation: `Student repeated the word "${studentWords[op.s_idx]}"`,
+                      p_idx: nextPassageOp.p_idx,
+                      s_idx: op.s_idx
                     });
                     continue; // Skip default insertion handling
                   }
@@ -1989,38 +2023,120 @@
               }
             }
 
-            // Handle standard miscues
+            // Handle standard miscues and Mispronunciation
             switch (op.op) {
               case 'sub':
-                miscues.push({
-                  type: 'Substitution',
+                // Check for Mispronunciation
+                const subOrig = normalizeWord(passageWords[p_idx]);
+                const subStudent = normalizeWord(studentWords[s_idx]);
+                const dist = levenshtein(subOrig, subStudent);
+                // Heuristic: dist <= 1 or (length > 3 and dist <= 2)
+                const isMispronunciation = dist <= 1 || (subOrig.length > 3 && dist <= 2);
+
+                initialMiscues.push({
+                  type: isMispronunciation ? 'Mispronunciation' : 'Substitution',
                   originalWord: passageWords[p_idx],
                   studentWord: studentWords[s_idx],
                   context: getContext(passageWords, p_idx),
-                  explanation: `Student substituted "${studentWords[s_idx]}" for "${passageWords[p_idx]}"`
+                  explanation: isMispronunciation
+                    ? `Student mispronounced "${passageWords[p_idx]}" as "${studentWords[s_idx]}"`
+                    : `Student substituted "${studentWords[s_idx]}" for "${passageWords[p_idx]}"`,
+                  p_idx: p_idx,
+                  s_idx: s_idx
                 });
                 break;
               case 'del':
-                miscues.push({
+                initialMiscues.push({
                   type: 'Omission',
                   originalWord: passageWords[p_idx],
                   studentWord: '[omitted]',
                   context: getContext(passageWords, p_idx),
-                  explanation: `Student omitted the word "${passageWords[p_idx]}"`
+                  explanation: `Student omitted the word "${passageWords[p_idx]}"`,
+                  p_idx: p_idx,
+                  s_idx: -1
                 });
                 break;
               case 'ins':
-                miscues.push({
+                initialMiscues.push({
                   type: 'Insertion',
                   originalWord: '[none]',
                   studentWord: studentWords[s_idx],
-                  context: getContext(passageWords, p_idx),
-                  explanation: `Student inserted the word "${studentWords[s_idx]}"`
+                  context: getContext(passageWords, p_idx), // Approximate context
+                  explanation: `Student inserted the word "${studentWords[s_idx]}"`,
+                  p_idx: -1,
+                  s_idx: s_idx
                 });
                 break;
               // 'match' operations are ignored
             }
           }
+
+          // --- Step 4: Detect Transpositions ---
+          // Identify words that are omitted in one place and inserted (or substituted) in another
+          // "Transposition should be detected when the student reads the correct words but changes their order"
+
+          miscues = [...initialMiscues];
+          const indicesToRemove = new Set();
+
+          // Collect all "Lost" words (Omissions, Substitutions-Original) and "Found" words (Insertions, Substitutions-Student)
+          const lostWords = [];
+          const foundWords = [];
+
+          miscues.forEach((m, idx) => {
+            if (m.type === 'Omission' || m.type === 'Substitution' || m.type === 'Mispronunciation') {
+              if (m.type !== 'Mispronunciation') {
+                lostWords.push({ word: normalizeWord(m.originalWord), index: idx, p_idx: m.p_idx });
+              }
+            }
+            if (m.type === 'Insertion' || m.type === 'Substitution') {
+              foundWords.push({ word: normalizeWord(m.studentWord), index: idx, s_idx: m.s_idx });
+            }
+          });
+
+          // Match Lost and Found greedy
+          for (let l of lostWords) {
+            if (indicesToRemove.has(l.index)) continue;
+
+            let bestMatch = null;
+            let minDist = Infinity;
+
+            for (let f of foundWords) {
+              if (indicesToRemove.has(f.index)) continue;
+              if (l.index === f.index) continue;
+
+              if (l.word === f.word) {
+                const dist = Math.abs(l.index - f.index);
+                if (dist < minDist) {
+                  minDist = dist;
+                  bestMatch = f;
+                }
+              }
+            }
+
+            if (bestMatch) {
+              indicesToRemove.add(l.index);
+              indicesToRemove.add(bestMatch.index);
+
+              const originalMiscue = miscues[l.index];
+              const studentMiscue = miscues[bestMatch.index];
+
+              miscues.push({
+                type: 'Transposition',
+                originalWord: originalMiscue.originalWord,
+                studentWord: studentMiscue.studentWord,
+                context: originalMiscue.context,
+                explanation: `Student transposed "${originalMiscue.originalWord}" (read at incorrect position)`,
+                p_idx: originalMiscue.p_idx,
+                s_idx: studentMiscue.s_idx
+              });
+            }
+          }
+
+          const finalMiscuesList = miscues.filter((_, idx) => !indicesToRemove.has(idx)).sort((a, b) => {
+            if (a.p_idx !== -1 && b.p_idx !== -1) return a.p_idx - b.p_idx;
+            if (a.s_idx !== -1 && b.s_idx !== -1) return a.s_idx - b.s_idx;
+            return 0;
+          });
 
           // Count miscues by type
           const miscueCounts = {
@@ -2028,10 +2144,12 @@
             Omission: 0,
             Insertion: 0,
             Repetition: 0,
-            Reversal: 0
+            Reversal: 0,
+            Mispronunciation: 0,
+            Transposition: 0
           };
 
-          miscues.forEach(miscue => {
+          finalMiscuesList.forEach(miscue => {
             if (miscueCounts.hasOwnProperty(miscue.type)) {
               miscueCounts[miscue.type]++;
             }
@@ -2039,20 +2157,23 @@
 
           resolve({
             summary: {
-              totalMiscues: miscues.length,
+              totalMiscues: finalMiscuesList.length,
               substitutions: miscueCounts.Substitution,
               omissions: miscueCounts.Omission,
               insertions: miscueCounts.Insertion,
               repetitions: miscueCounts.Repetition,
               reversals: miscueCounts.Reversal,
+              mispronunciations: miscueCounts.Mispronunciation,
+              transpositions: miscueCounts.Transposition
             },
-            miscues: miscues
+            miscues: finalMiscuesList
           });
         }, 1500);
       });
 
       // Helper function to get context around a word
       function getContext(words, index) {
+        if (index === -1) return "";
         const start = Math.max(0, index - 2);
         const end = Math.min(words.length, index + 3);
         return words.slice(start, end).join(' ');
@@ -5344,6 +5465,8 @@
         Insertion: { border: 'border-blue-500', bg: 'bg-blue-100', text: 'text-blue-700' },
         Repetition: { border: 'border-green-500', bg: 'bg-green-100', text: 'text-green-700' },
         Reversal: { border: 'border-indigo-500', bg: 'bg-indigo-100', text: 'text-indigo-700' },
+        Mispronunciation: { border: 'border-orange-500', bg: 'bg-orange-100', text: 'text-orange-700' },
+        Transposition: { border: 'border-purple-500', bg: 'bg-purple-100', text: 'text-purple-700' },
       };
 
       const colors = miscueTypeColors[miscue.type] || { border: 'border-gray-500', bg: 'bg-gray-100', text: 'text-gray-700' };
@@ -5474,11 +5597,13 @@
         Insertion: { border: 'border-blue-500', bg: 'bg-blue-100', text: 'text-blue-700' },
         Repetition: { border: 'border-green-500', bg: 'bg-green-100', text: 'text-green-700' },
         Reversal: { border: 'border-indigo-500', bg: 'bg-indigo-100', text: 'text-indigo-700' },
+        Mispronunciation: { border: 'border-orange-500', bg: 'bg-orange-100', text: 'text-orange-700' },
+        Transposition: { border: 'border-purple-500', bg: 'bg-purple-100', text: 'text-purple-700' },
       };
       return (
         <div className="bg-gray-50 p-6 rounded-lg shadow-sm border">
           <h2 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">Analysis Summary</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 text-center">
             <div className="bg-white p-3 rounded-md border shadow-sm">
               <p className="text-3xl font-bold text-gray-800">{summary.totalMiscues}</p>
               <p className="text-sm text-gray-500">Total Miscues</p>
@@ -5502,6 +5627,14 @@
             <div className={`p-3 rounded-md ${miscueTypeColors.Reversal.bg} border ${miscueTypeColors.Reversal.border}`}>
               <p className={`text-3xl font-bold ${miscueTypeColors.Reversal.text}`}>{summary.reversals}</p>
               <p className="text-sm text-gray-500">Reversals</p>
+            </div>
+            <div className={`p-3 rounded-md ${miscueTypeColors.Mispronunciation.bg} border ${miscueTypeColors.Mispronunciation.border}`}>
+              <p className={`text-3xl font-bold ${miscueTypeColors.Mispronunciation.text}`}>{summary.mispronunciations}</p>
+              <p className="text-sm text-gray-500">Mispronunciations</p>
+            </div>
+            <div className={`p-3 rounded-md ${miscueTypeColors.Transposition.bg} border ${miscueTypeColors.Transposition.border}`}>
+              <p className={`text-3xl font-bold ${miscueTypeColors.Transposition.text}`}>{summary.transpositions}</p>
+              <p className="text-sm text-gray-500">Transpositions</p>
             </div>
           </div>
         </div>
@@ -5531,6 +5664,16 @@
 
       const [currentAnalysisId, setCurrentAnalysisId] = useState(null); // FIXED: Track current analysis ID
       const [fontSize, setFontSize] = useState(18); // NEW: Font size state
+      // NEW: Reading Behavior Observation State
+      const [readingBehaviors, setReadingBehaviors] = useState({
+        wordByWord: false,
+        lacksExpression: false,
+        hardlyAudible: false,
+        disregardsPunctuation: false,
+        pointsToWords: false,
+        littleAnalysis: false,
+        otherObservations: ''
+      });
 
       const {
         voices,
@@ -5584,6 +5727,15 @@
         setAnalysisError(null);
         setStudentReading('');
         setCurrentAnalysisId(null); // FIXED: Reset current analysis ID
+        setReadingBehaviors({
+          wordByWord: false,
+          lacksExpression: false,
+          hardlyAudible: false,
+          disregardsPunctuation: false,
+          pointsToWords: false,
+          littleAnalysis: false,
+          otherObservations: ''
+        });
       }, [selectedPassageId, selectedStudent]);
 
       useEffect(() => {
@@ -5763,8 +5915,28 @@
           readingSpeed: calculateWPM(),
           comprehension: parseInt(comprehensionScore, 10),
           miscues: miscueCount,
+          readingBehaviors: readingBehaviors, // NEW: Include reading behaviors
         };
         onSaveAssessment(parseInt(selectedStudent, 10), newAssessment);
+
+        // NEW: Also update the current miscue analysis record with these details
+        if (currentAnalysisId && analysisResult) {
+          const updatedAnalysisResult = {
+            ...analysisResult,
+            readingSpeed: newAssessment.readingSpeed,
+            readingSpeed: newAssessment.readingSpeed,
+            comprehension: newAssessment.comprehension,
+            readingBehaviors: newAssessment.readingBehaviors,
+            week: newAssessment.week // NEW: Save week identifier
+          };
+          // Update local state to reflect changes immediately
+          setAnalysisResult(updatedAnalysisResult);
+          // Persist to storage
+          if (updateMiscueAnalysis) {
+            updateMiscueAnalysis(parseInt(selectedStudent, 10), currentAnalysisId, updatedAnalysisResult);
+          }
+        }
+
         alert('Assessment saved successfully!');
       };
 
@@ -5816,9 +5988,81 @@
           theme: 'striped', headStyles: { fillColor: [44, 62, 80] }
         });
 
+        // NEW: Add Original Passage and Student Reading before Miscue Details
+        const endOfSummaryY = doc.lastAutoTable.finalY + 20;
+        let currentY = endOfSummaryY;
+        const pageHeight = doc.internal.pageSize.height;
+        const marginBottom = 20;
+        const marginTop = 20;
+
+        // Helper to check page break
+        const checkPageBreak = (heightNeeded) => {
+          if (currentY + heightNeeded > pageHeight - marginBottom) {
+            doc.addPage();
+            currentY = marginTop;
+            return true;
+          }
+          return false;
+        };
+
+        // Original Passage
+        doc.setFontSize(14).setFont("helvetica", "bold");
+        checkPageBreak(10); // Check for title
+        doc.text("Original Passage", 14, currentY);
+
+        doc.setFontSize(10).setFont("helvetica", "normal");
+        const passageLines = doc.splitTextToSize(currentPassage.text, 180);
+        const passageHeight = passageLines.length * 5;
+
+        // If passage is very long (longer than a page), we might just print it and let it flow? 
+        // But doc.text doesn't auto-flow. For now, we assume it fits on one page or we break before it.
+        // A better approach for huge text is simple manual paging, but let's stick to "break before if needed".
+        if (checkPageBreak(passageHeight + 10)) {
+          // Title was reprinted? No, we just added a page. 
+          // If we added a page, we should reprint the title? Or effectively the title is on the previous page?
+          // Actually, if we break, we want the title on the NEW page.
+          // So let's refine:
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Original Passage", 14, currentY);
+        }
+
+        // Actually, the checkPageBreak function moves height. 
+        // Let's rewrite slightly for clarity and correctness:
+
+        // --- Logic Refined ---
+
+        // 1. Original Passage Title
+        if (currentY + 10 > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+        doc.setFontSize(14).setFont("helvetica", "bold").text("Original Passage", 14, currentY);
+        currentY += 10;
+
+        // 2. Original Passage Text
+        doc.setFontSize(10).setFont("helvetica", "normal");
+        const pLines = doc.splitTextToSize(currentPassage.text, 180);
+        // If text is super long, this simple check isn't enough, but it handles the "starts at bottom" case.
+        if (currentY + (pLines.length * 5) > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+        doc.text(pLines, 14, currentY);
+        currentY += (pLines.length * 5) + 10;
+
+        // 3. Student Reading Title
+        if (currentY + 10 > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+        doc.setFontSize(14).setFont("helvetica", "bold").text("Student Reading", 14, currentY);
+        currentY += 10;
+
+        // 4. Student Reading Text
+        doc.setFontSize(10).setFont("helvetica", "normal");
+        const sLines = doc.splitTextToSize(studentReading, 180);
+        if (currentY + (sLines.length * 5) > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+        doc.text(sLines, 14, currentY);
+        currentY += (sLines.length * 5) + 20;
+
         // Add miscue details if available
         if (analysisResult && analysisResult.miscues.length > 0) {
-          doc.setFontSize(14).setFont("helvetica", "bold").text("Miscue Analysis Details", 14, doc.lastAutoTable.finalY + 15);
+          if (currentY + 10 > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Miscue Analysis Details", 14, currentY);
+          // autoTable handles its own paging, but we need to set startY correctly
+          // If we just added a page, currentY is marginTop. 
+          // If we didn't, currentY is where we are.
+          // Note: autoTable might need space for header.
 
           const miscueTableData = analysisResult.miscues.map((miscue, index) => [
             index + 1,
@@ -5829,7 +6073,7 @@
           ]);
 
           doc.autoTable({
-            startY: doc.lastAutoTable.finalY + 20,
+            startY: currentY + 5,
             head: [['#', 'Type', 'Original Word', 'Student Read', 'Explanation']],
             body: miscueTableData,
             theme: 'grid',
@@ -5841,8 +6085,40 @@
               2: { cellWidth: 30 },
               3: { cellWidth: 30 },
               4: { cellWidth: 95 }
+            },
+            // Update currentY after table
+            didDrawPage: (data) => {
+              // accessing finalY is safer after call
             }
           });
+        }
+
+        // NEW: Add Reading Behaviors to PDF
+        doc.addPage();
+        doc.setFontSize(14).setFont("helvetica", "bold").text("Reading Behavior Observation (Observation Checklist)", 14, 20);
+
+        const behaviorData = [
+          ['Does word-by-word reading', readingBehaviors.wordByWord ? '/' : 'X'],
+          ['Lacks expression; reads in a monotonous tone', readingBehaviors.lacksExpression ? '/' : 'X'],
+          ['Voice is hardly audible', readingBehaviors.hardlyAudible ? '/' : 'X'],
+          ['Disregards punctuation', readingBehaviors.disregardsPunctuation ? '/' : 'X'],
+          ['Points to each word with his/her finger', readingBehaviors.pointsToWords ? '/' : 'X'],
+          ['Employs little or no method of analysis', readingBehaviors.littleAnalysis ? '/' : 'X']
+        ];
+
+        doc.autoTable({
+          startY: 30,
+          head: [['Behavior Indicator', 'Observation']],
+          body: behaviorData,
+          theme: 'striped',
+          headStyles: { fillColor: [44, 62, 80] }
+        });
+
+        if (readingBehaviors.otherObservations) {
+          doc.setFontSize(12).setFont("helvetica", "bold").text("Other Observations:", 14, doc.lastAutoTable.finalY + 15);
+          doc.setFont("helvetica", "normal").setFontSize(10);
+          const splitObs = doc.splitTextToSize(readingBehaviors.otherObservations, 180);
+          doc.text(splitObs, 14, doc.lastAutoTable.finalY + 25);
         }
 
         doc.save(`Assessment_Report_${student.firstName}_${student.lastName}.pdf`);
@@ -5878,7 +6154,9 @@
             Omission: 0,
             Insertion: 0,
             Repetition: 0,
-            Reversal: 0
+            Reversal: 0,
+            Mispronunciation: 0,
+            Transposition: 0
           };
 
           newMiscues.forEach(miscue => {
@@ -5897,6 +6175,8 @@
               insertions: miscueCounts.Insertion,
               repetitions: miscueCounts.Repetition,
               reversals: miscueCounts.Reversal,
+              mispronunciations: miscueCounts.Mispronunciation,
+              transpositions: miscueCounts.Transposition
             }
           };
 
@@ -5925,7 +6205,9 @@
             Omission: 0,
             Insertion: 0,
             Repetition: 0,
-            Reversal: 0
+            Reversal: 0,
+            Mispronunciation: 0,
+            Transposition: 0
           };
 
           newMiscues.forEach(miscue => {
@@ -5944,6 +6226,8 @@
               insertions: miscueCounts.Insertion,
               repetitions: miscueCounts.Repetition,
               reversals: miscueCounts.Reversal,
+              mispronunciations: miscueCounts.Mispronunciation,
+              transpositions: miscueCounts.Transposition
             }
           };
 
@@ -6189,6 +6473,104 @@
                 ))}
               </div>
               <button onClick={handleCheckAnswers} className="px-4 py-2 text-white bg-blue-600 rounded-md shadow-sm">Check Answers</button>
+            </div>
+
+            {/* Reading Behavior Observation Section */}
+            <div className="mt-8 border-t pt-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Reading Behavior Observation / Puna sa Pagbabasa</h3>
+              <div className="bg-white p-4 rounded-lg border shadow-sm space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readingBehaviors.wordByWord}
+                      onChange={(e) => setReadingBehaviors(prev => ({ ...prev, wordByWord: e.target.checked }))}
+                      className="mt-1 form-checkbox h-5 w-5 text-primary rounded"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Does word-by-word reading <br />
+                      <span className="italic text-gray-500">(Nagbabasa nang pa-isa-isang salita)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readingBehaviors.lacksExpression}
+                      onChange={(e) => setReadingBehaviors(prev => ({ ...prev, lacksExpression: e.target.checked }))}
+                      className="mt-1 form-checkbox h-5 w-5 text-primary rounded"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Lacks expression; reads in a monotonous tone <br />
+                      <span className="italic text-gray-500">(Walang damdamin; walang pagbabago ang tono)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readingBehaviors.hardlyAudible}
+                      onChange={(e) => setReadingBehaviors(prev => ({ ...prev, hardlyAudible: e.target.checked }))}
+                      className="mt-1 form-checkbox h-5 w-5 text-primary rounded"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Voice is hardly audible <br />
+                      <span className="italic text-gray-500">(Hindi madaling marinig ang boses)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readingBehaviors.disregardsPunctuation}
+                      onChange={(e) => setReadingBehaviors(prev => ({ ...prev, disregardsPunctuation: e.target.checked }))}
+                      className="mt-1 form-checkbox h-5 w-5 text-primary rounded"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Disregards punctuation <br />
+                      <span className="italic text-gray-500">(Hindi pinapansin ang mga bantas)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readingBehaviors.pointsToWords}
+                      onChange={(e) => setReadingBehaviors(prev => ({ ...prev, pointsToWords: e.target.checked }))}
+                      className="mt-1 form-checkbox h-5 w-5 text-primary rounded"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Points to each word with his/her finger <br />
+                      <span className="italic text-gray-500">(Itinuturo ang bawat salita)</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readingBehaviors.littleAnalysis}
+                      onChange={(e) => setReadingBehaviors(prev => ({ ...prev, littleAnalysis: e.target.checked }))}
+                      className="mt-1 form-checkbox h-5 w-5 text-primary rounded"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Employs little or no method of analysis <br />
+                      <span className="italic text-gray-500">(Bahagya o walang paraan ng pagsusuri)</span>
+                    </span>
+                  </label>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Other Observations / Ibang Puna
+                  </label>
+                  <textarea
+                    value={readingBehaviors.otherObservations}
+                    onChange={(e) => setReadingBehaviors(prev => ({ ...prev, otherObservations: e.target.value }))}
+                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
+                    rows="3"
+                    placeholder="Enter additional observations here..."
+                  ></textarea>
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end mt-6 border-t pt-6">
@@ -6642,20 +7024,25 @@
         doc.setFontSize(14).setFont("helvetica", "bold").text("Miscue Analysis Summary", 14, 85);
         const summary = selectedAnalysis.analysisResult.summary;
 
+        // FIXED: Retrieve WPM, Comprehension, and Behaviors from the saved analysis result if available
+        const savedWPM = selectedAnalysis.analysisResult.readingSpeed;
+        const savedComp = selectedAnalysis.analysisResult.comprehension;
+        const savedBehaviors = selectedAnalysis.analysisResult.readingBehaviors;
+
         // Compute word recognition based on passage word count and miscues
         const wordRecognition = selectedPassage && typeof selectedPassage.wordCount === 'number'
           ? Math.max(0, Math.round(((selectedPassage.wordCount - summary.totalMiscues) / selectedPassage.wordCount) * 100))
           : undefined;
 
-        // Try to read stored assessments to find a comprehension score (week 8 preferred)
-        let comprehensionVal = undefined;
-        try {
-          const storedAssessments = JSON.parse(localStorage.getItem('echoText-assessments') || '{}');
-          const studentAssess = storedAssessments[selectedStudent.id] || [];
-          const week8 = studentAssess.find(a => a.week === 8) || studentAssess.slice(-1)[0];
-          if (week8 && typeof week8.comprehension === 'number') comprehensionVal = week8.comprehension;
-        } catch (e) {
-          // ignore parsing errors
+        // Use saved comprehension or try to find it in assessments (fallback)
+        let comprehensionVal = savedComp;
+        if (comprehensionVal === undefined) {
+          try {
+            const storedAssessments = JSON.parse(localStorage.getItem('echoText-assessments') || '{}');
+            const studentAssess = storedAssessments[selectedStudent.id] || [];
+            const week8 = studentAssess.find(a => a.week === 8) || studentAssess.slice(-1)[0];
+            if (week8 && typeof week8.comprehension === 'number') comprehensionVal = week8.comprehension;
+          } catch (e) { /* ignore */ }
         }
 
         const computePhilIri = (wr, comp) => {
@@ -6679,25 +7066,52 @@
             ['Insertions', summary.insertions.toString()],
             ['Repetitions', summary.repetitions.toString()],
             ['Reversals', summary.reversals.toString()],
+            ['Mispronunciations', summary.mispronunciations.toString()],
+            ['Transpositions', summary.transpositions.toString()],
             ['Word Recognition', wordRecognition !== undefined ? `${wordRecognition}%` : 'N/A'],
             ['Comprehension Score', comprehensionVal !== undefined ? `${comprehensionVal}%` : 'N/A'],
+            ['Reading Speed (WPM)', savedWPM !== undefined ? savedWPM.toString() : 'N/A'], // NEW: Added WPM
             ['PHIL-IRI Level', phil.level]
           ],
           theme: 'striped',
           headStyles: { fillColor: [44, 62, 80] }
         });
 
-        // Student Reading - FIXED: Added proper spacing to prevent overlap
-        const studentReadingY = doc.lastAutoTable.finalY + 25;
-        doc.setFontSize(14).setFont("helvetica", "bold").text("Student Reading", 14, studentReadingY - 10);
+        // NEW: Add Original Passage and Student Reading before Miscue Details
+        const endOfSummaryY = doc.lastAutoTable.finalY + 20;
+        let currentY = endOfSummaryY;
+        const pageHeight = doc.internal.pageSize.height;
+        const marginBottom = 20;
+        const marginTop = 20;
+
+        // Original Passage
+        if (selectedAnalysis.passageText) {
+          if (currentY + 10 > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Original Passage", 14, currentY);
+          currentY += 10;
+
+          doc.setFontSize(10).setFont("helvetica", "normal");
+          const passageLines = doc.splitTextToSize(selectedAnalysis.passageText, 180);
+          if (currentY + (passageLines.length * 5) > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+          doc.text(passageLines, 14, currentY);
+          currentY += (passageLines.length * 5) + 10;
+        }
+
+        // Student Reading
+        if (currentY + 10 > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+        doc.setFontSize(14).setFont("helvetica", "bold").text("Student Reading", 14, currentY);
+        currentY += 10;
+
         doc.setFontSize(10).setFont("helvetica", "normal");
         const studentReadingLines = doc.splitTextToSize(selectedAnalysis.studentReading, 180);
-        doc.text(studentReadingLines, 14, studentReadingY);
+        if (currentY + (studentReadingLines.length * 5) > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+        doc.text(studentReadingLines, 14, currentY);
+        currentY += (studentReadingLines.length * 5) + 20;
 
         // Detailed Miscues - FIXED: Added proper spacing
         if (selectedAnalysis.analysisResult.miscues.length > 0) {
-          const miscueStartY = studentReadingY + (studentReadingLines.length * 5) + 20;
-          doc.setFontSize(14).setFont("helvetica", "bold").text("Detailed Miscue Analysis", 14, miscueStartY);
+          if (currentY + 10 > pageHeight - marginBottom) { doc.addPage(); currentY = marginTop; }
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Detailed Miscue Analysis", 14, currentY);
 
           const miscueTableData = selectedAnalysis.analysisResult.miscues.map((miscue, index) => [
             index + 1,
@@ -6708,7 +7122,7 @@
           ]);
 
           doc.autoTable({
-            startY: miscueStartY + 10,
+            startY: currentY + 5,
             head: [['#', 'Type', 'Original Word', 'Student Read', 'Explanation']],
             body: miscueTableData,
             theme: 'grid',
@@ -6722,6 +7136,37 @@
               4: { cellWidth: 95 }
             }
           });
+        }
+
+        // NEW: Add Reading Behaviors to PDF if available
+        if (selectedAnalysis.analysisResult.readingBehaviors) {
+          const readingBehaviors = selectedAnalysis.analysisResult.readingBehaviors;
+          doc.addPage();
+          doc.setFontSize(14).setFont("helvetica", "bold").text("Reading Behavior Observation (Observation Checklist)", 14, 20);
+
+          const behaviorData = [
+            ['Does word-by-word reading', readingBehaviors.wordByWord ? '/' : 'X'],
+            ['Lacks expression; reads in a monotonous tone', readingBehaviors.lacksExpression ? '/' : 'X'],
+            ['Voice is hardly audible', readingBehaviors.hardlyAudible ? '/' : 'X'],
+            ['Disregards punctuation', readingBehaviors.disregardsPunctuation ? '/' : 'X'],
+            ['Points to each word with his/her finger', readingBehaviors.pointsToWords ? '/' : 'X'],
+            ['Employs little or no method of analysis', readingBehaviors.littleAnalysis ? '/' : 'X']
+          ];
+
+          doc.autoTable({
+            startY: 30,
+            head: [['Behavior Indicator', 'Observation']],
+            body: behaviorData,
+            theme: 'striped',
+            headStyles: { fillColor: [44, 62, 80] }
+          });
+
+          if (readingBehaviors.otherObservations) {
+            doc.setFontSize(12).setFont("helvetica", "bold").text("Other Observations:", 14, doc.lastAutoTable.finalY + 15);
+            doc.setFont("helvetica", "normal").setFontSize(10);
+            const splitObs = doc.splitTextToSize(readingBehaviors.otherObservations, 180);
+            doc.text(splitObs, 14, doc.lastAutoTable.finalY + 25);
+          }
         }
 
         doc.save(`Miscue_Analysis_${selectedStudent.firstName}_${selectedStudent.lastName}_${new Date(selectedAnalysis.timestamp).toISOString().split('T')[0]}.pdf`);
@@ -7303,6 +7748,308 @@
       );
     };
 
+    // NEW: Phil-IRI Report Component
+    const PhilIriReport = ({ students, assessments, settings, teacherName }) => {
+      const { miscueData } = useMiscueStorage();
+      const [storedPassages, setStoredPassages] = useState({});
+      const [selectedWeek, setSelectedWeek] = useState('latest');
+
+      useEffect(() => {
+        try {
+          const passages = JSON.parse(localStorage.getItem('echoText-passages') || '{}');
+          setStoredPassages(passages);
+        } catch (e) {
+          console.error("Failed to load passages", e);
+        }
+      }, []);
+
+      // Process student data
+      const reportData = useMemo(() => {
+        const sortedStudents = [...students].sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+
+        return sortedStudents.map((student, index) => {
+          const studentData = miscueData[student.id] || [];
+          let latestAnalysis = null;
+
+          if (selectedWeek === 'latest') {
+            latestAnalysis = studentData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
+          } else {
+            const weekNum = parseInt(selectedWeek, 10);
+            // 1. Try Direct Match (for new data)
+            latestAnalysis = studentData.find(m => m.week === weekNum);
+
+            // 2. Fallback: Heuristic Match (for legacy data)
+            if (!latestAnalysis && assessments && assessments[student.id]) {
+              const assess = assessments[student.id].find(a => a.week === weekNum);
+              if (assess) {
+                latestAnalysis = studentData.find(m =>
+                  m.analysisResult &&
+                  m.analysisResult.summary &&
+                  (m.analysisResult.summary.totalMiscues === assess.miscues) &&
+                  (m.analysisResult.comprehension === assess.comprehension) &&
+                  (m.analysisResult.readingSpeed === assess.readingSpeed)
+                );
+              }
+            }
+          }
+
+          if (!latestAnalysis) {
+            return {
+              no: index + 1,
+              name: `${student.lastName}, ${student.firstName}`,
+              hasData: false,
+              level: 'Not Assessed'
+            };
+          }
+
+          const summary = latestAnalysis.analysisResult.summary;
+          const passage = storedPassages[latestAnalysis.passageId] || { wordCount: 0 };
+          const wc = passage.wordCount || 0;
+          const totalMiscues = summary.totalMiscues;
+          const wr = wc > 0 ? Math.max(0, Math.round(((wc - totalMiscues) / wc) * 100)) : 0;
+          const comp = latestAnalysis.analysisResult.comprehension !== undefined ? latestAnalysis.analysisResult.comprehension : 0;
+          const wpm = latestAnalysis.analysisResult.readingSpeed || 0;
+
+          // Compute Level
+          let level = 'Not Assessed';
+          if (wr >= 97 && comp >= 80) level = 'Independent';
+          else if (wr >= 90 && comp >= 59) level = 'Instructional';
+          else if (wr < 1 || comp < 1) level = 'Non-Reader';
+          else if (wr < 90 || comp < 59) level = 'Frustration';
+
+          return {
+            no: index + 1,
+            name: `${student.lastName}, ${student.firstName}`,
+            hasData: true,
+            totalMiscues,
+            subs: summary.substitutions,
+            omissions: summary.omissions,
+            insertions: summary.insertions,
+            repetitions: summary.repetitions,
+            reversals: summary.reversals,
+            mispronunciations: summary.mispronunciations,
+            transpositions: summary.transpositions,
+            wr,
+            comp,
+            wpm,
+            level
+          };
+        });
+      }, [students, miscueData, storedPassages, selectedWeek, assessments]);
+
+      const handleDownloadStats = () => {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+
+        doc.setFontSize(20).setFont("helvetica", "bold").text("Phil-IRI Summary Statistics", 105, 22, { align: 'center' });
+        doc.setFontSize(12).setFont("helvetica", "normal");
+        doc.text(`Teacher: ${teacherName || 'N/A'}`, 14, 40);
+        doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 48);
+        doc.text(`Assessment Period: ${selectedWeek === 'latest' ? 'Latest Assessment' : (settings.reportPeriod === 'weeks' ? 'Week ' : 'Day ') + selectedWeek}`, 14, 56);
+
+        // Aggregate Stats
+        const stats = {
+          'Independent': [],
+          'Instructional': [],
+          'Frustration': [],
+          'Non-Reader': [],
+          'Not Assessed': []
+        };
+
+        reportData.forEach(r => {
+          if (stats[r.level]) stats[r.level].push(r.name);
+          else stats['Not Assessed'].push(r.name);
+        });
+
+        let currentY = 65;
+
+        // Summary Counts
+        doc.setFontSize(14).setFont("helvetica", "bold").text("Summary Statistics", 14, currentY);
+        currentY += 10;
+
+        const summaryData = [
+          ['Reading Level', 'Count'],
+          ['Independent', stats['Independent'].length],
+          ['Instructional', stats['Instructional'].length],
+          ['Frustration', stats['Frustration'].length],
+          ['Non-Reader', stats['Non-Reader'].length],
+          ['Not Assessed', stats['Not Assessed'].length]
+        ];
+
+        doc.autoTable({
+          startY: currentY,
+          head: [summaryData[0]],
+          body: summaryData.slice(1),
+          theme: 'striped',
+          headStyles: { fillColor: [44, 62, 80] },
+          tableWidth: 'auto',
+        });
+
+        currentY = doc.lastAutoTable.finalY + 20;
+
+        // Detailed Lists (Numbered Bullets)
+        const levels = ['Independent', 'Instructional', 'Frustration', 'Non-Reader', 'Not Assessed'];
+
+        levels.forEach(level => {
+          if (currentY + 20 > doc.internal.pageSize.height - 20) { doc.addPage(); currentY = 20; }
+
+          doc.setFontSize(12).setFont("helvetica", "bold").text(`${level} (${stats[level].length})`, 14, currentY);
+          currentY += 8;
+          doc.setFontSize(10).setFont("helvetica", "normal");
+
+          if (stats[level].length > 0) {
+            stats[level].forEach((name, idx) => {
+              if (currentY + 7 > doc.internal.pageSize.height - 20) { doc.addPage(); currentY = 20; }
+              doc.text(`${idx + 1}. ${name}`, 20, currentY);
+              currentY += 6;
+            });
+            currentY += 10;
+          } else {
+            doc.text("No students.", 20, currentY);
+            currentY += 15;
+          }
+        });
+
+        doc.save("Phil-IRI_Summary_Statistics.pdf");
+      };
+
+      const handleDownloadClassReport = () => {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
+
+        doc.setFontSize(18).setFont("helvetica", "bold").text("Phil-IRI Class Report", 148, 22, { align: 'center' });
+        doc.setFontSize(11).setFont("helvetica", "normal");
+        doc.text(`Teacher: ${teacherName || 'N/A'}`, 14, 35);
+        doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 42);
+        doc.text(`Period: ${selectedWeek === 'latest' ? 'Latest' : (settings.reportPeriod === 'weeks' ? 'Week ' : 'Day ') + selectedWeek}`, 14, 49);
+
+        const grade = students[0]?.gradeLevel || '';
+        const section = students[0]?.section || '';
+        const gradeText = grade === 'Kinder' ? 'Kindergarten' : `Grade ${grade}`;
+        doc.text(`Year & Section: ${gradeText}${section ? ' - ' + section : ''}`, 100, 49); // Adjusted position
+
+        const tableHeaders = [['No.', 'Student Name', 'Total', 'Subs', 'Omit', 'Ins', 'Reps', 'Rev', 'Mispro', 'Trans', 'WR%', 'Comp%', 'WPM', 'Level']];
+        const tableBody = reportData.map(r => [
+          r.no,
+          r.name,
+          r.hasData ? r.totalMiscues : '-',
+          r.hasData ? r.subs : '-',
+          r.hasData ? r.omissions : '-',
+          r.hasData ? r.insertions : '-',
+          r.hasData ? r.repetitions : '-',
+          r.hasData ? r.reversals : '-',
+          r.hasData ? r.mispronunciations : '-',
+          r.hasData ? r.transpositions : '-',
+          r.hasData ? `${r.wr}%` : '-',
+          r.hasData ? `${r.comp}%` : '-',
+          r.hasData ? r.wpm : '-',
+          r.level
+        ]);
+
+        doc.autoTable({
+          startY: 55,
+          head: tableHeaders,
+          body: tableBody,
+          theme: 'grid',
+          headStyles: { fillColor: [44, 62, 80], fontSize: 10 },
+          styles: { fontSize: 9, cellPadding: 2 },
+          columnStyles: {
+            0: { cellWidth: 10 }, // No
+            1: { cellWidth: 40 }, // Name
+            // Others auto
+            13: { fontStyle: 'bold' } // Level
+          }
+        });
+
+        doc.save("Phil-IRI_Class_Report.pdf");
+      };
+
+      return (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+            <div className="flex items-center gap-4">
+              <h3 className="text-xl font-bold text-gray-800">Phil-IRI Class Report</h3>
+              <select
+                value={selectedWeek}
+                onChange={e => setSelectedWeek(e.target.value)}
+                className="ml-2 block rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
+              >
+                <option value="latest">Latest Assessment</option>
+                {settings && Array.from({ length: settings.totalWeeks }, (_, i) => i + 1).map(week => (
+                  <option key={week} value={week}>{settings.reportPeriod === 'weeks' ? 'Week' : 'Day'} {week}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={handleDownloadStats} className="flex items-center gap-2 px-4 py-2 text-white bg-green-600 rounded-md hover:bg-green-700">
+                <DownloadIcon className="w-5 h-5" /> Summary Stats
+              </button>
+              <button onClick={handleDownloadClassReport} className="flex items-center gap-2 px-4 py-2 text-white bg-primary rounded-md hover:bg-blue-600">
+                <DownloadIcon className="w-5 h-5" /> Class Report
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200 border text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-3 text-left font-medium text-gray-500 uppercase border">No.</th>
+                  <th className="px-3 py-3 text-left font-medium text-gray-500 uppercase border whitespace-nowrap">Student Name</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Total Miscues</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Subs</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Omissions</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Insertions</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Reps</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Reversals</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Mispro</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Transpo</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Word Recog</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Comp %</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">WPM</th>
+                  <th className="px-3 py-3 text-center font-medium text-gray-500 uppercase border">Level</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {reportData.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 border">{idx + 1}</td>
+                    <td className="px-3 py-2 border font-medium whitespace-nowrap">{row.name}</td>
+                    {row.hasData ? (
+                      <>
+                        <td className="px-3 py-2 text-center border">{row.totalMiscues}</td>
+                        <td className="px-3 py-2 text-center border">{row.subs}</td>
+                        <td className="px-3 py-2 text-center border">{row.omissions}</td>
+                        <td className="px-3 py-2 text-center border">{row.insertions}</td>
+                        <td className="px-3 py-2 text-center border">{row.repetitions}</td>
+                        <td className="px-3 py-2 text-center border">{row.reversals}</td>
+                        <td className="px-3 py-2 text-center border">{row.mispronunciations}</td>
+                        <td className="px-3 py-2 text-center border">{row.transpositions}</td>
+                        <td className="px-3 py-2 text-center border font-semibold">{row.wr}%</td>
+                        <td className="px-3 py-2 text-center border font-semibold">{row.comp}%</td>
+                        <td className="px-3 py-2 text-center border">{row.wpm}</td>
+                        <td className="px-3 py-2 text-center border">
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full
+                             ${row.level === 'Independent' ? 'bg-green-100 text-green-800' :
+                              row.level === 'Instructional' ? 'bg-yellow-100 text-yellow-800' :
+                                row.level === 'Frustration' ? 'bg-orange-100 text-orange-800' :
+                                  row.level === 'Non-Reader' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>
+                            {row.level}
+                          </span>
+                        </td>
+                      </>
+                    ) : (
+                      <td colSpan="12" className="px-3 py-2 text-center text-gray-400 italic border">No Assessment Data</td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    };
+
     // UPDATED: Results component with Progress Report Settings, Miscue Analysis Report, and Class Summary
     const Results = ({ students, assessments, teacherName }) => {
       const [selectedStudentId, setSelectedStudentId] = useState(''); // Used by Progress Report
@@ -7440,6 +8187,16 @@
                 >
                   Miscue Analysis
                 </button>
+                {/* NEW: Phil-IRI Tab */}
+                <button
+                  className={`flex-1 px-4 py-3 text-center font-medium ${activeTab === 'phil-iri'
+                    ? 'text-primary border-b-2 border-primary'
+                    : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  onClick={() => setActiveTab('phil-iri')}
+                >
+                  Phil-IRI Report
+                </button>
                 <button
                   className={`flex-1 px-4 py-3 text-center font-medium ${activeTab === 'prosody' ? 'text-primary border-b-2 border-primary' : 'text-gray-500 hover:text-gray-700'}`}
                   onClick={() => setActiveTab('prosody')}
@@ -7508,7 +8265,9 @@
                   ) : <div className="text-center py-12 border-2 border-dashed rounded-lg"><p className="text-gray-500">Select a student to view their progress report.</p></div>}
                 </div>
               )}
+              {/* NEW: Updated Tabs */}
               {activeTab === 'miscue' && <MiscueAnalysisReport students={students} passages={{}} teacherName={teacherName} />}
+              {activeTab === 'phil-iri' && <PhilIriReport students={students} assessments={assessments} settings={settings} teacherName={teacherName} />}
               {activeTab === 'prosody' && <ProsodyReport students={students} passages={{}} teacherName={teacherName} />}
               {activeTab === 'comprehension' && <ComprehensionQuizReport students={students} teacherName={teacherName} />}
             </div>
@@ -7592,12 +8351,14 @@
                 <li><strong>Insertion:</strong> Adding a word that is not in the text</li>
                 <li><strong>Repetition:</strong> Repeating a word or phrase</li>
                 <li><strong>Reversal:</strong> Inverting the order of words or letters</li>
+                <li><strong>Mispronunciation:</strong> Pronouncing a word incorrectly (e.g., wrong stress or vowel sound)</li>
+                <li><strong>Transposition:</strong> Swapping the position of two adjacent words or phrases</li>
               </ul>
               <h5 className="font-semibold mb-2 text-gray-800">Scoring Guidelines:</h5>
               <p className="text-gray-700">Record each miscue made by the student during oral reading. Analyze whether the miscue changes the meaning of the text. Use the analysis to identify patterns in reading difficulties and plan appropriate interventions.</p>
             </div>
           </div>
-        </div>
+        </div >
       );
     };
 

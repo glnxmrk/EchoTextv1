@@ -1,6 +1,6 @@
-const CACHE_NAME = 'echotext-v1';
+const CACHE_NAME = 'echotext-v2';
 const ASSETS_TO_CACHE = [
-  './EchoText-12-27.html',
+  './index.html',
   './manifest.json',
   './icon-512.png',
   'https://cdn.tailwindcss.com',
@@ -14,10 +14,8 @@ const ASSETS_TO_CACHE = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // We use addAll and catch potential errors so one failure doesn't break everything,
-      // but ideally all should work.
       return cache.addAll(ASSETS_TO_CACHE).catch(err => {
-         console.warn('One or more assets failed to cache:', err);
+        console.warn('One or more assets failed to cache:', err);
       });
     })
   );
@@ -30,6 +28,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
+            console.log('Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
         })
@@ -40,13 +39,23 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Network first for HTML to get updates, Cache first for others? 
-  // Or Cache First for everything for speed?
-  // Strategy: Stale-while-revalidate for HTML, Cache-first for libs.
-  // For simplicity: Cache First, falling back to network.
   event.respondWith(
     caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
+      // Return cached response if found
+      if (response) {
+        return response;
+      }
+
+      // Attempt to fetch from network
+      return fetch(event.request).then(networkResponse => {
+        // Optional: Dynamic caching of new requests could go here
+        return networkResponse;
+      }).catch(error => {
+        console.error('Fetch failed:', error);
+        // If both cache and network fail, we can't do much for external assets
+        // But for navigation requests, we could return a fallback page if we had one.
+        throw error;
+      });
     })
   );
 });
